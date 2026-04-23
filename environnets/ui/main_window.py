@@ -6,8 +6,10 @@ Status bar at the bottom with connection info.
 """
 
 import uuid
+import importlib
+from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QFileSystemWatcher
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -60,6 +62,19 @@ class MainWindow(QMainWindow):
         self._ping_timer.timeout.connect(self._ping_linked_units)
         self._ping_timer.start(8000)
         self._check_connection()
+
+        # Hot reload: watch source files for changes
+        self._watcher = QFileSystemWatcher(self)
+        src_dir = Path(__file__).resolve().parent
+        watch_files = [str(f) for f in src_dir.rglob("*.py")]
+        core_dir = src_dir.parent / "core"
+        watch_files += [str(f) for f in core_dir.rglob("*.py")]
+        self._watcher.addPaths(watch_files)
+        self._watcher.fileChanged.connect(self._on_source_changed)
+
+        # Ctrl+R manual reload
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence("Ctrl+R"), self, self._hot_reload)
 
     # -- UI construction ---------------------------------------------------
 
@@ -463,3 +478,25 @@ class MainWindow(QMainWindow):
         if isinstance(current, ExperimentPanel):
             current.api = self.api
             current.canvas.api = self.api
+
+    def _on_source_changed(self, path: str):
+        """Auto-reload when a source file is saved."""
+        if not self._watcher.files() or path not in self._watcher.files():
+            self._watcher.addPath(path)
+        if not hasattr(self, "_reload_timer"):
+            self._reload_timer = QTimer(self)
+            self._reload_timer.setSingleShot(True)
+            self._reload_timer.timeout.connect(self._hot_reload)
+        self._reload_timer.start(300)
+
+    def _hot_reload(self):
+        """Reload UI modules and re-apply styles."""
+        import environnets.ui.theme as theme_mod
+        import environnets.ui.cartoons as cartoons_mod
+        try:
+            importlib.reload(theme_mod)
+            importlib.reload(cartoons_mod)
+            self.setStyleSheet(theme_mod.STYLESHEET)
+            self.statusBar().showMessage("Hot reload OK", 2000)
+        except Exception as e:
+            self.statusBar().showMessage(f"Reload error: {e}", 4000)
