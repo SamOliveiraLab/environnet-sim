@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QStackedWidget,
     QFrame, QListWidget, QListWidgetItem, QStatusBar,
     QDialog, QDialogButtonBox, QFormLayout, QMessageBox,
-    QSplitter,
+    QSplitter, QSizePolicy,
 )
 
 from environnets.core import PioAPI
@@ -70,18 +70,30 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Sidebar
+        # Sidebar (resizable so small MacBook screens can give space to the canvas)
         sidebar = self._build_sidebar()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(280)
+        sidebar.setMinimumWidth(188)
+        sidebar.setMaximumWidth(360)
+        sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
-        # Content area
         self.content_stack = QStackedWidget()
+        self.content_stack.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self._build_welcome_page()
         self._build_canvas_page()
 
-        layout.addWidget(sidebar)
-        layout.addWidget(self.content_stack, 1)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(5)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(sidebar)
+        splitter.addWidget(self.content_stack)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([252, 980])
+
+        layout.addWidget(splitter)
 
         # Status bar
         self.status_bar = QStatusBar()

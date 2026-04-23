@@ -2,7 +2,8 @@
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QDoubleSpinBox, QSpinBox, QComboBox,
+    QFrame, QDoubleSpinBox, QSpinBox, QComboBox, QScrollArea,
+    QSizePolicy,
 )
 from environnets.core.experiments import Experiment, save_experiment
 from environnets.ui.canvas import NetworkCanvas
@@ -26,21 +27,27 @@ class ExperimentPanel(QWidget):
         # Header bar
         header = QFrame()
         header.setStyleSheet(f"background:{BG_PANEL};border-bottom:1px solid {BORDER}")
-        header.setFixedHeight(58)
+        header.setMinimumHeight(52)
         hl = QHBoxLayout(header)
         hl.setContentsMargins(20, 10, 20, 10)
 
         name = QLabel(experiment.name)
         name.setStyleSheet(f"font-size:15px;font-weight:500;color:{TEXT_PRIMARY}")
+        name.setWordWrap(True)
+        name.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         desc = QLabel(experiment.description or "No description")
         desc.setStyleSheet(f"font-size:11px;color:{TEXT_MUTED}")
+        desc.setWordWrap(True)
+        desc.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
         name_col = QVBoxLayout()
         name_col.setSpacing(2)
         name_col.addWidget(name)
         name_col.addWidget(desc)
-        hl.addLayout(name_col)
-        hl.addStretch()
+        name_wrap = QWidget()
+        name_wrap.setLayout(name_col)
+        name_wrap.setMinimumWidth(120)
+        hl.addWidget(name_wrap, 1)
 
         self._status_label = QLabel("Draft")
         self._status_label.setStyleSheet(
@@ -60,41 +67,48 @@ class ExperimentPanel(QWidget):
 
         root.addWidget(header)
 
-        # Parameters strip
-        params = QFrame()
-        params.setStyleSheet(f"background:{BG_CARD};border-bottom:1px solid {BORDER}")
-        params.setFixedHeight(58)
-        pl = QHBoxLayout(params)
+        # Parameters strip — scroll horizontally on narrow screens (small MacBooks)
+        params_scroll = QScrollArea()
+        params_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        params_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        params_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        params_scroll.setWidgetResizable(False)
+        params_scroll.setFixedHeight(62)
+        params_scroll.setStyleSheet(f"QScrollArea{{background:{BG_CARD};border-bottom:1px solid {BORDER}}}")
+
+        params_inner = QWidget()
+        params_inner.setStyleSheet(f"background:{BG_CARD}")
+        pl = QHBoxLayout(params_inner)
         pl.setContentsMargins(20, 8, 20, 8)
-        pl.setSpacing(14)
+        pl.setSpacing(12)
 
         self._mode = QComboBox()
         self._mode.addItems(["Manual", "Chemostat", "Turbidostat"])
-        self._mode.setFixedWidth(120)
+        self._mode.setMinimumWidth(108)
 
         self._rpm = QSpinBox()
         self._rpm.setRange(0, 1500)
         self._rpm.setValue(int(experiment.parameters.get("rpm", 400)))
         self._rpm.setSuffix(" rpm")
-        self._rpm.setFixedWidth(100)
+        self._rpm.setMinimumWidth(88)
 
         self._temp = QDoubleSpinBox()
         self._temp.setRange(15.0, 50.0)
         self._temp.setValue(float(experiment.parameters.get("temp", 30.0)))
         self._temp.setSuffix(" C")
-        self._temp.setFixedWidth(90)
+        self._temp.setMinimumWidth(78)
 
         self._vol = QDoubleSpinBox()
         self._vol.setRange(0.01, 10.0)
         self._vol.setValue(float(experiment.parameters.get("vol", 0.5)))
         self._vol.setSuffix(" mL")
-        self._vol.setFixedWidth(90)
+        self._vol.setMinimumWidth(78)
 
         self._interval = QSpinBox()
         self._interval.setRange(1, 1440)
         self._interval.setValue(int(experiment.parameters.get("interval", 15)))
         self._interval.setSuffix(" min")
-        self._interval.setFixedWidth(100)
+        self._interval.setMinimumWidth(88)
 
         for w, lbl in [(self._mode, "Mode"), (self._rpm, "Stir"),
                        (self._temp, "Temp"), (self._vol, "Dose"), (self._interval, "Every")]:
@@ -109,7 +123,9 @@ class ExperimentPanel(QWidget):
             pl.addWidget(wrap)
 
         pl.addStretch()
-        root.addWidget(params)
+        params_inner.setMinimumWidth(720)
+        params_scroll.setWidget(params_inner)
+        root.addWidget(params_scroll)
 
         # Canvas
         self.canvas = NetworkCanvas(api, store)

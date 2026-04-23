@@ -28,7 +28,7 @@ class CanvasWidget(QWidget):
     def __init__(self, parent_canvas):
         super().__init__()
         self.parent_canvas = parent_canvas
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(360, 260)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
@@ -376,7 +376,9 @@ class UnitPalette(QFrame):
     def __init__(self, canvas_widget):
         super().__init__()
         self.canvas_widget = canvas_widget
-        self.setFixedWidth(210)
+        self.setMinimumWidth(160)
+        self.setMaximumWidth(220)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
         self.setStyleSheet(f"background:{BG_PANEL};border-right:1px solid {BORDER}")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 14, 10, 14)

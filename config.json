@@ -10,10 +10,10 @@
     "poll_interval_seconds": 10
   },
   "ui": {
-    "window_width": 1400,
-    "window_height": 850,
-    "min_width": 1100,
-    "min_height": 700,
+    "window_width": 1280,
+    "window_height": 800,
+    "min_width": 860,
+    "min_height": 580,
     "theme": "dark"
   },
   "canvas": {

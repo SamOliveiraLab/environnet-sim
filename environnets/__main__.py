@@ -30,12 +30,12 @@ def main():
     ui_cfg = get_section("ui")
     window = MainWindow()
     window.resize(
-        ui_cfg.get("window_width", 1400),
-        ui_cfg.get("window_height", 850),
+        ui_cfg.get("window_width", 1280),
+        ui_cfg.get("window_height", 800),
     )
     window.setMinimumSize(
-        ui_cfg.get("min_width", 1100),
-        ui_cfg.get("min_height", 700),
+        ui_cfg.get("min_width", 860),
+        ui_cfg.get("min_height", 580),
     )
     window.show()
 
