@@ -7,7 +7,7 @@
       "request": "launch",
       "module": "environnets",
       "cwd": "${workspaceFolder}",
-      "python": "${workspaceFolder}/venv/bin/python",
+      "python": "${command:python.interpreterPath}",
       "env": {
         "PYTHONPATH": "${workspaceFolder}"
       },
