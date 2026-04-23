@@ -59,32 +59,47 @@ def draw_pio_vial(p: QPainter, x: float, y: float, w: float, h: float, unit, pha
     p.setPen(QPen(METAL, 1))
     p.drawRoundedRect(vial_rect, 4, 4)
 
-    # Liquid fill (2/3 of vial)
+    # Liquid fill — color shifts with OD (turbidity)
+    od = getattr(unit, "last_od", 0.0) or 0.0
     liquid_h = vial_h * 0.7
     liquid_top = vial_y + vial_h - liquid_h
     liquid_rect = QRectF(vial_x + 1, liquid_top, vial_w - 2, liquid_h - 2)
-    p.setBrush(QBrush(LIQUID))
+    turbidity = min(1.0, od / 2.0)
+    liq_r = int(70 + turbidity * 80)
+    liq_g = int(140 - turbidity * 40)
+    liq_b = int(170 - turbidity * 60)
+    liq_a = int(130 + turbidity * 80)
+    p.setBrush(QBrush(QColor(liq_r, liq_g, liq_b, liq_a)))
     p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(liquid_rect, 2, 2)
 
-    # Cells floating (driven by real OD stored on unit)
-    if unit.status in ("running", "idle"):
-        od = getattr(unit, "last_od", 0.0) or 0.0
-        if od < 0.05:
-            cell_count = 0
-        elif od < 0.3:
-            cell_count = 3
-        elif od < 0.8:
-            cell_count = 10
-        elif od < 1.5:
-            cell_count = 20
-        else:
-            cell_count = 35
+    # Cells floating — use sim cells if available, else derive from OD
+    sim_cells = getattr(unit, "_sim_cells", None)
+    if sim_cells and unit.status == "running":
         p.setBrush(QBrush(CELL))
+        p.setPen(Qt.PenStyle.NoPen)
+        for c in sim_cells:
+            cx = vial_x + c["x"] * vial_w
+            cy = liquid_top + (c["y"] - 0.25) / 0.65 * liquid_h
+            r = 1.2 * c.get("size", 1.0)
+            p.drawEllipse(QPointF(cx, cy), r, r * 0.8)
+    elif unit.status in ("running", "idle") and od > 0.05:
+        cell_count = int(min(40, od * 18))
+        p.setBrush(QBrush(CELL))
+        p.setPen(Qt.PenStyle.NoPen)
         for i in range(cell_count):
             cx = vial_x + 4 + ((i * 7 + phase * 20) % (vial_w - 8))
             cy = liquid_top + 6 + ((i * 11 + phase * 15) % (liquid_h - 12))
             p.drawEllipse(QPointF(cx, cy), 1.5, 1.2)
+
+    # OD reading overlay
+    if unit.status == "running" and od > 0:
+        od_text = f"OD {od:.2f}"
+        p.setPen(QPen(QColor(200, 220, 255, 200)))
+        f = QFont("Inter", 7, QFont.Weight.Bold)
+        p.setFont(f)
+        p.drawText(QRectF(vial_x, vial_y + 2, vial_w, 12),
+                   Qt.AlignmentFlag.AlignCenter, od_text)
 
     # Stir bar (spinning ellipse at bottom of liquid)
     sb_cx = vial_x + vial_w / 2
@@ -304,13 +319,20 @@ def draw_probe(p: QPainter, x: float, y: float, w: float, h: float, unit, phase:
     p.setPen(QPen(METAL, 0.5))
     p.drawRoundedRect(face, 2, 2)
 
-    # Needle or reading
+    # Reading display
     if unit.status == "running":
-        p.setPen(QPen(color, 1.2))
-        nx = face.x() + face.width() / 2
-        ny = face.y() + face.height() - 2
-        ang = math.radians(-45 + 90 * (0.5 + 0.3 * math.sin(phase * 2 * math.pi)))
-        p.drawLine(QPointF(nx, ny), QPointF(nx + 10 * math.cos(ang), ny + 10 * math.sin(ang)))
+        reading = getattr(unit, "_sim_reading", None)
+        if reading is not None:
+            p.setPen(QPen(QColor(120, 220, 160), 1))
+            f = QFont("Inter", 7, QFont.Weight.Bold)
+            p.setFont(f)
+            p.drawText(face, Qt.AlignmentFlag.AlignCenter, f"{reading:.1f}")
+        else:
+            p.setPen(QPen(color, 1.2))
+            nx = face.x() + face.width() / 2
+            ny = face.y() + face.height() - 2
+            ang = math.radians(-45 + 90 * (0.5 + 0.3 * math.sin(phase * 2 * math.pi)))
+            p.drawLine(QPointF(nx, ny), QPointF(nx + 10 * math.cos(ang), ny + 10 * math.sin(ang)))
 
     # Probe shaft dipping down
     p.setPen(QPen(METAL, 2.5))
@@ -333,6 +355,131 @@ def draw_spec(p, x, y, w, h, u, ph): draw_probe(p, x, y, w, h, u, ph, QColor(255
 def draw_custom_sensor(p, x, y, w, h, u, ph): draw_probe(p, x, y, w, h, u, ph, QColor(180, 180, 200))
 
 
+# -- RESERVOIRS ------------------------------------------------------------
+
+def draw_media_bottle(p: QPainter, x: float, y: float, w: float, h: float, unit, phase: float):
+    """Media bottle: tall bottle with cap, filled with clear/blue media."""
+    # Bottle neck
+    neck_w = w * 0.22
+    neck_h = h * 0.12
+    neck_x = x + w / 2 - neck_w / 2
+    neck_y = y + 8
+    p.setBrush(QBrush(GLASS))
+    p.setPen(QPen(METAL, 1.2))
+    p.drawRect(QRectF(neck_x, neck_y, neck_w, neck_h))
+
+    # Cap
+    cap_w = neck_w + 6
+    p.setBrush(QBrush(METAL_DARK))
+    p.setPen(QPen(METAL, 0.8))
+    p.drawRoundedRect(QRectF(x + w / 2 - cap_w / 2, y + 4, cap_w, 8), 2, 2)
+
+    # Bottle body (wider, rounded bottom)
+    body_y = neck_y + neck_h
+    body_h = h - neck_h - 28
+    body = QRectF(x + w * 0.15, body_y, w * 0.7, body_h)
+    p.setBrush(QBrush(GLASS))
+    p.setPen(QPen(METAL, 1.2))
+
+    path = QPainterPath()
+    path.moveTo(neck_x, body_y)
+    path.lineTo(x + w * 0.15, body_y + body_h * 0.15)
+    path.lineTo(x + w * 0.15, body_y + body_h)
+    path.quadTo(x + w * 0.15, body_y + body_h + 6, x + w * 0.22, body_y + body_h + 6)
+    path.lineTo(x + w * 0.78, body_y + body_h + 6)
+    path.quadTo(x + w * 0.85, body_y + body_h + 6, x + w * 0.85, body_y + body_h)
+    path.lineTo(x + w * 0.85, body_y + body_h * 0.15)
+    path.lineTo(neck_x + neck_w, body_y)
+    path.closeSubpath()
+    p.drawPath(path)
+
+    # Liquid fill (80% full, blue-ish clean media)
+    fill_h = body_h * 0.75
+    fill_y = body_y + body_h - fill_h + 4
+    liq = QRectF(x + w * 0.17, fill_y, w * 0.66, fill_h)
+    p.setBrush(QBrush(QColor(80, 150, 200, 120)))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(liq, 2, 2)
+
+    _text(p, x, y + h - 16, w, unit.label or "Media", 9)
+
+
+def draw_waste_bottle(p: QPainter, x: float, y: float, w: float, h: float, unit, phase: float):
+    """Waste bottle: same shape as media but with murky brownish liquid."""
+    neck_w = w * 0.22
+    neck_h = h * 0.12
+    neck_x = x + w / 2 - neck_w / 2
+    neck_y = y + 8
+    p.setBrush(QBrush(GLASS))
+    p.setPen(QPen(METAL, 1.2))
+    p.drawRect(QRectF(neck_x, neck_y, neck_w, neck_h))
+
+    cap_w = neck_w + 6
+    p.setBrush(QBrush(METAL_DARK))
+    p.setPen(QPen(METAL, 0.8))
+    p.drawRoundedRect(QRectF(x + w / 2 - cap_w / 2, y + 4, cap_w, 8), 2, 2)
+
+    body_y = neck_y + neck_h
+    body_h = h - neck_h - 28
+
+    path = QPainterPath()
+    path.moveTo(neck_x, body_y)
+    path.lineTo(x + w * 0.15, body_y + body_h * 0.15)
+    path.lineTo(x + w * 0.15, body_y + body_h)
+    path.quadTo(x + w * 0.15, body_y + body_h + 6, x + w * 0.22, body_y + body_h + 6)
+    path.lineTo(x + w * 0.78, body_y + body_h + 6)
+    path.quadTo(x + w * 0.85, body_y + body_h + 6, x + w * 0.85, body_y + body_h)
+    path.lineTo(x + w * 0.85, body_y + body_h * 0.15)
+    path.lineTo(neck_x + neck_w, body_y)
+    path.closeSubpath()
+    p.setBrush(QBrush(GLASS))
+    p.setPen(QPen(METAL, 1.2))
+    p.drawPath(path)
+
+    # Murky waste liquid (30% full, brownish)
+    fill_h = body_h * 0.3
+    fill_y = body_y + body_h - fill_h + 4
+    liq = QRectF(x + w * 0.17, fill_y, w * 0.66, fill_h)
+    p.setBrush(QBrush(QColor(140, 110, 70, 130)))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(liq, 2, 2)
+
+    _text(p, x, y + h - 16, w, unit.label or "Waste", 9)
+
+
+def draw_reagent_bottle(p: QPainter, x: float, y: float, w: float, h: float, unit, phase: float):
+    """Reagent bottle: smaller bottle with colored liquid."""
+    neck_w = w * 0.24
+    neck_h = h * 0.1
+    neck_x = x + w / 2 - neck_w / 2
+    neck_y = y + 8
+    p.setBrush(QBrush(GLASS))
+    p.setPen(QPen(METAL, 1.2))
+    p.drawRect(QRectF(neck_x, neck_y, neck_w, neck_h))
+
+    cap_w = neck_w + 4
+    p.setBrush(QBrush(QColor(180, 60, 60)))
+    p.setPen(QPen(METAL, 0.8))
+    p.drawRoundedRect(QRectF(x + w / 2 - cap_w / 2, y + 4, cap_w, 7), 2, 2)
+
+    body_y = neck_y + neck_h
+    body_h = h - neck_h - 24
+    body = QRectF(x + w * 0.18, body_y, w * 0.64, body_h)
+    p.setBrush(QBrush(GLASS))
+    p.setPen(QPen(METAL, 1.2))
+    p.drawRoundedRect(body, 4, 4)
+
+    # Colored reagent (green/yellow)
+    fill_h = body_h * 0.6
+    fill_y = body_y + body_h - fill_h - 1
+    liq = QRectF(x + w * 0.2, fill_y, w * 0.6, fill_h)
+    p.setBrush(QBrush(QColor(120, 190, 90, 130)))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(liq, 2, 2)
+
+    _text(p, x, y + h - 14, w, unit.label or "Reagent", 9)
+
+
 # -- registry --------------------------------------------------------------
 
 DRAW_FUNCTIONS = {
@@ -348,6 +495,10 @@ DRAW_FUNCTIONS = {
     ("pump", "single_syringe"): draw_syringe,
     ("pump", "diaphragm"):      draw_diaphragm,
     ("pump", "custom_pump"):    draw_custom_pump,
+    # reservoirs
+    ("reservoir", "media_bottle"):  draw_media_bottle,
+    ("reservoir", "waste_bottle"):  draw_waste_bottle,
+    ("reservoir", "reagent_bottle"): draw_reagent_bottle,
     # sensors
     ("sensor", "od"):            draw_od,
     ("sensor", "temperature"):   draw_temp,
@@ -371,8 +522,10 @@ def draw_unit(painter: QPainter, unit, phase: float = 0.0):
 
 def draw_status_glow(painter: QPainter, unit, phase: float):
     """Glowing outline indicating connection status."""
-    from environnets.core.unit_types import default_dims
     cat = getattr(unit, "category", "reactor")
+    if cat == "reservoir":
+        return
+    from environnets.core.unit_types import default_dims
     tid = getattr(unit, "type_id", "pio_20ml")
     w, h = default_dims(cat, tid)
     status_color_map = {
@@ -382,7 +535,6 @@ def draw_status_glow(painter: QPainter, unit, phase: float):
         "connected":    QColor(80, 130, 180, 160),
     }
     color = status_color_map.get(unit.status, QColor(160, 70, 70, 120))
-    # Pulsing width for running state
     pulse_w = 3.0 + (1.5 * math.sin(phase * 2 * math.pi) if unit.status == "running" else 0)
     pen = QPen(color, pulse_w)
     painter.setPen(pen)

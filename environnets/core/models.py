@@ -40,6 +40,14 @@ class Unit:
     last_temp: float = 0.0
     last_gr: float = 0.0
 
+    def __hash__(self):
+        return hash(self.uid)
+
+    def __eq__(self, other):
+        if not isinstance(other, Unit):
+            return NotImplemented
+        return self.uid == other.uid
+
 
 @dataclass
 class Connection:

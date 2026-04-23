@@ -140,10 +140,35 @@ SENSOR_TYPES = {
     },
 }
 
+RESERVOIR_TYPES = {
+    "media_bottle": {
+        "label": "Media bottle",
+        "description": "Reservoir holding fresh growth media. Feeds into the media pump.",
+        "width": 100,
+        "height": 140,
+        "config_fields": ["volume_ml", "media_type"],
+    },
+    "waste_bottle": {
+        "label": "Waste bottle",
+        "description": "Collects effluent/waste from the bioreactor.",
+        "width": 100,
+        "height": 140,
+        "config_fields": ["volume_ml"],
+    },
+    "reagent_bottle": {
+        "label": "Reagent bottle",
+        "description": "Holds inducer, antibiotic, or other reagent for dosing.",
+        "width": 90,
+        "height": 120,
+        "config_fields": ["volume_ml", "reagent_name"],
+    },
+}
+
 CATEGORY_MAP = {
     "reactor": REACTOR_TYPES,
     "pump": PUMP_TYPES,
     "sensor": SENSOR_TYPES,
+    "reservoir": RESERVOIR_TYPES,
 }
 
 
@@ -160,3 +185,60 @@ def list_types(category: str) -> list:
 def default_dims(category: str, type_id: str) -> tuple[int, int]:
     t = get_type(category, type_id)
     return (t.get("width", 120), t.get("height", 100))
+
+
+def get_port_pos(unit, role: str, other_unit=None) -> tuple[float, float]:
+    """Return canvas (x, y) for the connection port on a unit.
+
+    role: 'source' — use an outward port; 'target' — use an inward port.
+    other_unit: the unit on the other end, used to pick the best side.
+    """
+    import math
+    w, h = default_dims(unit.category, unit.type_id)
+    cx, cy = unit.x + w / 2, unit.y + h / 2
+
+    if unit.category == "reservoir":
+        return (unit.x + w * 0.5, unit.y + h * 0.07)
+
+    if unit.category == "sensor":
+        return (unit.x + w * 0.5, unit.y)
+
+    if unit.category == "pump":
+        if other_unit:
+            ow, oh = default_dims(other_unit.category, other_unit.type_id)
+            ocx, ocy = other_unit.x + ow / 2, other_unit.y + oh / 2
+            dx, dy = ocx - cx, ocy - cy
+            if abs(dy) > abs(dx) * 1.2:
+                if dy < 0:
+                    return (unit.x + w * 0.5, unit.y)
+                return (unit.x + w * 0.5, unit.y + h)
+            if dx < 0:
+                return (unit.x, unit.y + h * 0.5)
+            return (unit.x + w, unit.y + h * 0.5)
+        return (unit.x + w, unit.y + h * 0.5)
+
+    if unit.category == "reactor":
+        if other_unit and other_unit.category == "sensor":
+            ow = default_dims(other_unit.category, other_unit.type_id)[0]
+            ocx = other_unit.x + ow / 2
+            frac = max(0.2, min(0.8, (ocx - unit.x) / w))
+            return (unit.x + w * frac, unit.y + h)
+        if other_unit:
+            ow = default_dims(other_unit.category, other_unit.type_id)[0]
+            ocx = other_unit.x + ow / 2
+            if ocx < cx:
+                return (unit.x + w * 0.18, unit.y + h * 0.06)
+            return (unit.x + w * 0.82, unit.y + h * 0.06)
+        return (unit.x + w * 0.5, unit.y + h * 0.06)
+
+    return (cx, cy)
+
+
+def port_tangent(unit, px: float, py: float) -> tuple[float, float]:
+    """Unit-length direction vector pointing outward from a port."""
+    import math
+    w, h = default_dims(unit.category, unit.type_id)
+    cx, cy = unit.x + w / 2, unit.y + h / 2
+    dx, dy = px - cx, py - cy
+    length = math.sqrt(dx * dx + dy * dy) or 1.0
+    return (dx / length, dy / length)

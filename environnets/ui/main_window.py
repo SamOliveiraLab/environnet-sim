@@ -5,6 +5,7 @@ Content area on the right that shows the network canvas or unit detail view.
 Status bar at the bottom with connection info.
 """
 
+import time
 import uuid
 import importlib
 from pathlib import Path
@@ -16,10 +17,10 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QStackedWidget,
     QFrame, QListWidget, QListWidgetItem, QStatusBar,
     QDialog, QDialogButtonBox, QFormLayout, QMessageBox,
-    QSplitter, QSizePolicy,
+    QSplitter, QSizePolicy, QTextEdit,
 )
 
-from environnets.core import PioAPI
+from environnets.core import PioAPI, add_log_listener
 from environnets.core.config import get
 from environnets.core.models import Store, Network, Unit, Connection
 from environnets.core.experiments import (
@@ -28,7 +29,7 @@ from environnets.core.experiments import (
 )
 from environnets.ui.theme import (
     STYLESHEET, ACCENT, ACCENT_DIM, GREEN, RED, TEXT_PRIMARY,
-    TEXT_SECONDARY, TEXT_MUTED, BG_CARD, BG_PANEL, BG_HOVER,
+    TEXT_SECONDARY, TEXT_MUTED, BG_CARD, BG_PANEL, BG_HOVER, BG_INPUT,
     BORDER, BORDER_HOVER,
 )
 from environnets.ui.canvas import NetworkCanvas
@@ -63,6 +64,9 @@ class MainWindow(QMainWindow):
         self._ping_timer.start(8000)
         self._check_connection()
 
+        # API log listener
+        add_log_listener(self._on_api_log)
+
         # Hot reload: watch source files for changes
         self._watcher = QFileSystemWatcher(self)
         src_dir = Path(__file__).resolve().parent
@@ -86,7 +90,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         # Sidebar (resizable so small MacBook screens can give space to the canvas)
-        sidebar = self._build_sidebar()
+        sidebar = self._sidebar = self._build_sidebar()
         sidebar.setObjectName("sidebar")
         sidebar.setMinimumWidth(188)
         sidebar.setMaximumWidth(360)
@@ -99,15 +103,50 @@ class MainWindow(QMainWindow):
         self._build_welcome_page()
         self._build_canvas_page()
 
+        # Logger panel (collapsible)
+        self._log_panel = QFrame()
+        self._log_panel.setVisible(False)
+        self._log_panel.setFixedHeight(160)
+        self._log_panel.setStyleSheet(
+            f"QFrame{{background:{BG_CARD};border-top:1px solid {BORDER}}}"
+        )
+        log_vl = QVBoxLayout(self._log_panel)
+        log_vl.setContentsMargins(8, 4, 8, 4)
+        log_vl.setSpacing(2)
+        log_hdr = QHBoxLayout()
+        log_title = QLabel("API Log")
+        log_title.setStyleSheet(f"font-size:10px;font-weight:600;color:{TEXT_SECONDARY}")
+        log_hdr.addWidget(log_title)
+        log_hdr.addStretch()
+        log_clear = QPushButton("Clear")
+        log_clear.setFixedSize(48, 20)
+        log_clear.setStyleSheet(f"font-size:9px;padding:0;border-radius:3px")
+        log_clear.clicked.connect(lambda: self._log_text.clear())
+        log_hdr.addWidget(log_clear)
+        log_vl.addLayout(log_hdr)
+        self._log_text = QTextEdit()
+        self._log_text.setReadOnly(True)
+        self._log_text.setStyleSheet(
+            f"QTextEdit{{background:{BG_INPUT};border:1px solid {BORDER};"
+            f"border-radius:4px;font-family:monospace;font-size:10px;color:{TEXT_SECONDARY}}}"
+        )
+        log_vl.addWidget(self._log_text)
+
+        content_col = QWidget()
+        content_vl = QVBoxLayout(content_col)
+        content_vl.setContentsMargins(0, 0, 0, 0)
+        content_vl.setSpacing(0)
+        content_vl.addWidget(self.content_stack, 1)
+        content_vl.addWidget(self._log_panel)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(5)
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(sidebar)
-        splitter.addWidget(self.content_stack)
+        splitter.addWidget(content_col)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([252, 980])
-
         layout.addWidget(splitter)
 
         # Status bar
@@ -115,8 +154,17 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self._conn_dot = QLabel()
         self._conn_label = QLabel("Checking connection...")
+        self._log_btn = QPushButton("Log")
+        self._log_btn.setFixedSize(40, 20)
+        self._log_btn.setStyleSheet(
+            f"QPushButton{{font-size:9px;padding:0;border-radius:3px;"
+            f"border:1px solid {BORDER};background:{BG_CARD};color:{TEXT_MUTED}}}"
+            f"QPushButton:hover{{color:{TEXT_PRIMARY};background:{BG_HOVER}}}"
+        )
+        self._log_btn.clicked.connect(self._toggle_log)
         self.status_bar.addWidget(self._conn_dot)
         self.status_bar.addWidget(self._conn_label)
+        self.status_bar.addPermanentWidget(self._log_btn)
 
     def _build_sidebar(self) -> QFrame:
         frame = QFrame()
@@ -171,6 +219,8 @@ class MainWindow(QMainWindow):
         # Network list
         self.network_list = QListWidget()
         self.network_list.itemClicked.connect(self._on_network_selected)
+        self.network_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.network_list.customContextMenuRequested.connect(self._network_context_menu)
         layout.addWidget(self.network_list, 1)
 
         # Delete network button
@@ -324,6 +374,28 @@ class MainWindow(QMainWindow):
             self.content_stack.setCurrentIndex(0)
             self.setWindowTitle("EnvironNets")
 
+    def _network_context_menu(self, pos):
+        item = self.network_list.itemAt(pos)
+        if not item:
+            return
+        from PyQt6.QtWidgets import QMenu
+        m = QMenu(self)
+        m.setStyleSheet(
+            f"QMenu{{background:{BG_CARD};border:1px solid {BORDER};border-radius:6px;padding:4px}}"
+            f"QMenu::item{{padding:6px 20px;border-radius:4px;color:{TEXT_SECONDARY}}}"
+            f"QMenu::item:selected{{background:{BG_HOVER};color:{TEXT_PRIMARY}}}"
+        )
+        a_open = m.addAction("Open")
+        m.addSeparator()
+        a_del = m.addAction("Delete")
+        choice = m.exec(self.network_list.mapToGlobal(pos))
+        if choice == a_open:
+            self.network_list.setCurrentItem(item)
+            self._on_network_selected(item)
+        elif choice == a_del:
+            self.network_list.setCurrentItem(item)
+            self._delete_selected_network()
+
     # -- experiments -------------------------------------------------------
 
     def _load_experiments(self, network_id: str = ""):
@@ -455,6 +527,25 @@ class MainWindow(QMainWindow):
             self._conn_btn.setText("Configure connection")
 
 
+    def _toggle_log(self):
+        vis = not self._log_panel.isVisible()
+        self._log_panel.setVisible(vis)
+        self._log_btn.setText("Log ▲" if vis else "Log")
+
+    def _on_api_log(self, entry):
+        ts = time.strftime("%H:%M:%S", time.localtime(entry["ts"]))
+        status = entry["status"]
+        color = "#4a9e6e" if isinstance(status, int) and status < 400 else "#bf5555"
+        line = (f'<span style="color:#4e4e5a">{ts}</span> '
+                f'<span style="color:#7c7c8a">{entry["method"]}</span> '
+                f'<span style="color:#dcdce0">{entry["path"]}</span> '
+                f'<span style="color:{color}">{status}</span>')
+        if entry.get("detail"):
+            line += f' <span style="color:#4e4e5a">{entry["detail"][:120]}</span>'
+        self._log_text.append(line)
+        sb = self._log_text.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
     def _ping_linked_units(self):
         if not self.connected or not self.current_network:
             return
@@ -493,9 +584,11 @@ class MainWindow(QMainWindow):
         """Reload UI modules and re-apply styles."""
         import environnets.ui.theme as theme_mod
         import environnets.ui.cartoons as cartoons_mod
+        import environnets.ui.setup_wizard as wizard_mod
         try:
             importlib.reload(theme_mod)
             importlib.reload(cartoons_mod)
+            importlib.reload(wizard_mod)
             self.setStyleSheet(theme_mod.STYLESHEET)
             self.statusBar().showMessage("Hot reload OK", 2000)
         except Exception as e:

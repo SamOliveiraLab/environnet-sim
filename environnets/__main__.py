@@ -6,11 +6,23 @@ Launch with:
     environnets  (after pip install -e .)
 """
 
+import os
 import sys
 import logging
 
+import PyQt6
+os.environ.setdefault(
+    "QT_PLUGIN_PATH",
+    os.path.join(os.path.dirname(PyQt6.__file__), "Qt6", "plugins"),
+)
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
+
+Qt.HighDpiScaleFactorRoundingPolicy  # ensure enum loaded
+QApplication.setHighDpiScaleFactorRoundingPolicy(
+    Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+)
 
 from environnets.core.config import get, get_section
 from environnets.ui.main_window import MainWindow
@@ -22,10 +34,6 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(get("app", "name", "EnvironNets"))
     app.setOrganizationName("OliveiraLab")
-
-    app.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-    )
 
     ui_cfg = get_section("ui")
     window = MainWindow()

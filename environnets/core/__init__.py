@@ -6,6 +6,7 @@ All endpoints discovered from the existing fluidic-automation dashboard.
 
 import json
 import logging
+import time
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -14,6 +15,29 @@ import requests
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 8  # seconds
+
+_log_listeners: list = []
+
+
+def add_log_listener(fn):
+    _log_listeners.append(fn)
+
+
+def remove_log_listener(fn):
+    try:
+        _log_listeners.remove(fn)
+    except ValueError:
+        pass
+
+
+def _emit_log(method: str, path: str, status: int | str, detail: str = ""):
+    entry = {"ts": time.time(), "method": method, "path": path,
+             "status": status, "detail": detail}
+    for fn in _log_listeners:
+        try:
+            fn(entry)
+        except Exception:
+            pass
 
 
 class PioAPI:
@@ -33,8 +57,10 @@ class PioAPI:
         try:
             r = self._session.get(self._url(path), timeout=DEFAULT_TIMEOUT, **kw)
             r.raise_for_status()
+            _emit_log("GET", path, r.status_code)
             return r.json()
         except Exception as exc:
+            _emit_log("GET", path, "ERR", str(exc))
             logger.warning("GET %s failed: %s", path, exc)
             return None
 
@@ -46,8 +72,10 @@ class PioAPI:
                 timeout=DEFAULT_TIMEOUT,
                 **kw,
             )
+            _emit_log("POST", path, r.status_code, json.dumps(body or {})[:200])
             return r
         except Exception as exc:
+            _emit_log("POST", path, "ERR", str(exc))
             logger.warning("POST %s failed: %s", path, exc)
             return None
 
