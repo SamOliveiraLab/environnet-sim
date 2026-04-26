@@ -1,0 +1,6 @@
+# Phase 1: IP-based testing — plain HTTP, any host header.
+# Switch to Caddyfile.prod once sandbox.environnets.com DNS is set.
+:80 {
+    encode gzip
+    reverse_proxy 127.0.0.1:8080
+}

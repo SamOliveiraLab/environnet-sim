@@ -1,0 +1,18 @@
+[Unit]
+Description=EnvironNets Sandbox (NiceGUI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/environnet-sim
+Environment=PYTHONUNBUFFERED=1
+Environment=ENVIRONNETS_HOST=127.0.0.1
+Environment=ENVIRONNETS_PORT=8080
+ExecStart=/home/ubuntu/environnet-sim/.venv/bin/python -m environnets.web
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

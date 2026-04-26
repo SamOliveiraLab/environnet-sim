@@ -8,15 +8,23 @@ version = "0.1.0"
 description = "Bioreactor network control platform"
 requires-python = ">=3.10"
 dependencies = [
-    "PyQt6>=6.6.0",
-    "PyQt6-Charts>=6.6.0",
-    "pyqtgraph>=0.13.3",
     "requests>=2.31.0",
     "numpy>=1.24.0",
 ]
 
+[project.optional-dependencies]
+desktop = [
+    "PyQt6>=6.6.0",
+    "PyQt6-Charts>=6.6.0",
+    "pyqtgraph>=0.13.3",
+]
+web = [
+    "nicegui>=1.4.0",
+]
+
 [project.scripts]
 environnets = "environnets.__main__:main"
+environnets-web = "environnets.web.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["environnets*"]
