@@ -1,0 +1,23 @@
+[Unit]
+Description=EnvironNets desktop app via Xpra (browser-shared)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/environnet-sim
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/ubuntu
+Environment=XDG_RUNTIME_DIR=/tmp/runtime-ubuntu
+ExecStartPre=/bin/mkdir -p /tmp/runtime-ubuntu
+ExecStartPre=/bin/chmod 700 /tmp/runtime-ubuntu
+ExecStart=/home/ubuntu/environnet-sim/deploy/start-xpra.sh
+ExecStop=/usr/bin/xpra stop :100
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

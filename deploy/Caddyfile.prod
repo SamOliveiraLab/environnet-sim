@@ -1,4 +1,6 @@
 sandbox.environnets.com {
     encode gzip
-    reverse_proxy 127.0.0.1:8080
+    @root path /
+    redir @root /index.html?autoconnect=true&path=/&keyboard=true permanent
+    reverse_proxy 127.0.0.1:14500
 }
