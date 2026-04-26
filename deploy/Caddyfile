@@ -10,7 +10,7 @@
         path /
         not header Connection *Upgrade*
     }
-    redir @bare_root /index.html?autoconnect=true&keyboard=true permanent
+    redir @bare_root /index.html?autoconnect=true permanent
 
     reverse_proxy 127.0.0.1:14500
 }
