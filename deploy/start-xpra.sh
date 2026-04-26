@@ -12,6 +12,7 @@ VENV_PY="$HOME/environnet-sim/.venv/bin/python"
 exec /usr/bin/xpra start :100 \
     --bind-tcp=127.0.0.1:14500 \
     --html=on \
+    --sharing=yes \
     --daemon=no \
     --use-display=auto \
     --start-child="$VENV_PY -m environnets" \
