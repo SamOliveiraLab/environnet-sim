@@ -5,14 +5,15 @@ set -euo pipefail
 
 VENV_PY="$HOME/environnet-sim/.venv/bin/python"
 
-# Cleanup any stale xpra session on :100 from a prior run
-/usr/bin/xpra stop :100 >/dev/null 2>&1 || true
-sleep 1
+# Note: we do NOT pre-stop a previous session here -- xpra v6 with
+# `--use-display=auto` handles that, and an explicit pre-stop hangs
+# for ~20s when there's no session to stop, fighting with systemd.
 
 exec /usr/bin/xpra start :100 \
     --bind-tcp=127.0.0.1:14500 \
     --html=on \
     --daemon=no \
+    --use-display=auto \
     --start-child="$VENV_PY -m environnets" \
     --exit-with-children=yes \
     --notifications=no \
