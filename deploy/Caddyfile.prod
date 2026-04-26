@@ -1,6 +1,11 @@
 sandbox.environnets.com {
     encode gzip
-    @root path /
-    redir @root /index.html?autoconnect=true&path=/&keyboard=true permanent
+
+    @bare_root {
+        path /
+        not header Connection *Upgrade*
+    }
+    redir @bare_root /index.html?autoconnect=true&keyboard=true permanent
+
     reverse_proxy 127.0.0.1:14500
 }
