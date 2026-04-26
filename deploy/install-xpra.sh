@@ -6,7 +6,7 @@ set -euo pipefail
 echo "==> Installing xpra and X11 runtime deps"
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-    xpra xpra-html5 xvfb \
+    xpra xvfb \
     libxcb-cursor0 libxcb-xinerama0 libxkbcommon-x11-0 \
     libegl1 libdbus-1-3 libfontconfig1 libxrender1 \
     libxi6 libxrandr2 libxss1 libxtst6 \
