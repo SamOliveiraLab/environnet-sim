@@ -202,6 +202,7 @@ class ExperimentPanel(QWidget):
             self._temp_plot = pg.PlotWidget(title="Temperature (°C)")
             self._temp_plot.showGrid(x=True, y=True, alpha=0.15)
             self._temp_plot.setMinimumHeight(100)
+            self._temp_plot.setYRange(20, 45)
             self._temp_curve = self._temp_plot.plot(pen=pg.mkPen("#c48a5a", width=2))
             plots_row.addWidget(self._temp_plot)
 
@@ -256,8 +257,7 @@ class ExperimentPanel(QWidget):
             dose_interval_min=self._interval.value(),
         )
         for u in self.canvas.network.units:
-            if u.category in ("reactor", "pump"):
-                u.status = "running"
+            u.status = "running"
         self.experiment.status = "running"
         self._sim_timer.start(33)
         self._update_status_ui()

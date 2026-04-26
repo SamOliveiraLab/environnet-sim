@@ -59,19 +59,49 @@ def draw_pio_vial(p: QPainter, x: float, y: float, w: float, h: float, unit, pha
     p.setPen(QPen(METAL, 1))
     p.drawRoundedRect(vial_rect, 4, 4)
 
-    # Liquid fill — color shifts with OD (turbidity)
+    # Liquid fill — color shifts with OD (turbidity), animated wave surface
     od = getattr(unit, "last_od", 0.0) or 0.0
     liquid_h = vial_h * 0.7
     liquid_top = vial_y + vial_h - liquid_h
-    liquid_rect = QRectF(vial_x + 1, liquid_top, vial_w - 2, liquid_h - 2)
     turbidity = min(1.0, od / 2.0)
     liq_r = int(70 + turbidity * 80)
     liq_g = int(140 - turbidity * 40)
     liq_b = int(170 - turbidity * 60)
     liq_a = int(130 + turbidity * 80)
-    p.setBrush(QBrush(QColor(liq_r, liq_g, liq_b, liq_a)))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawRoundedRect(liquid_rect, 2, 2)
+    liq_color = QColor(liq_r, liq_g, liq_b, liq_a)
+
+    lx = vial_x + 1
+    lw = vial_w - 2
+    lb = vial_y + vial_h - 2
+
+    if unit.status == "running":
+        wave_amp = 1.5 + turbidity * 1.0
+        wave_path = QPainterPath()
+        wave_path.moveTo(lx, lb)
+        wave_path.lineTo(lx, liquid_top)
+        steps = 12
+        for i in range(steps + 1):
+            frac = i / steps
+            wx = lx + frac * lw
+            wy = liquid_top + wave_amp * math.sin(phase * 2 * math.pi * 3 + frac * math.pi * 4)
+            if i == 0:
+                wave_path.lineTo(wx, wy)
+            else:
+                wave_path.lineTo(wx, wy)
+        wave_path.lineTo(lx + lw, lb)
+        wave_path.closeSubpath()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(liq_color))
+        p.drawPath(wave_path)
+        hi_color = QColor(liq_r + 30, liq_g + 20, liq_b + 10, 40)
+        hi_rect = QRectF(lx + lw * 0.15, liquid_top + 2, lw * 0.3, liquid_h * 0.4)
+        p.setBrush(QBrush(hi_color))
+        p.drawRoundedRect(hi_rect, 3, 3)
+    else:
+        liquid_rect = QRectF(lx, liquid_top, lw, liquid_h - 2)
+        p.setBrush(QBrush(liq_color))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(liquid_rect, 2, 2)
 
     # Cells floating — use sim cells if available, else derive from OD
     sim_cells = getattr(unit, "_sim_cells", None)
@@ -320,19 +350,18 @@ def draw_probe(p: QPainter, x: float, y: float, w: float, h: float, unit, phase:
     p.drawRoundedRect(face, 2, 2)
 
     # Reading display
-    if unit.status == "running":
-        reading = getattr(unit, "_sim_reading", None)
-        if reading is not None:
-            p.setPen(QPen(QColor(120, 220, 160), 1))
-            f = QFont("Inter", 7, QFont.Weight.Bold)
-            p.setFont(f)
-            p.drawText(face, Qt.AlignmentFlag.AlignCenter, f"{reading:.1f}")
-        else:
-            p.setPen(QPen(color, 1.2))
-            nx = face.x() + face.width() / 2
-            ny = face.y() + face.height() - 2
-            ang = math.radians(-45 + 90 * (0.5 + 0.3 * math.sin(phase * 2 * math.pi)))
-            p.drawLine(QPointF(nx, ny), QPointF(nx + 10 * math.cos(ang), ny + 10 * math.sin(ang)))
+    reading = getattr(unit, "_sim_reading", None)
+    if reading is not None:
+        p.setPen(QPen(QColor(120, 220, 160), 1))
+        f = QFont("Inter", 7, QFont.Weight.Bold)
+        p.setFont(f)
+        p.drawText(face, Qt.AlignmentFlag.AlignCenter, f"{reading:.1f}")
+    elif unit.status == "running":
+        p.setPen(QPen(color, 1.2))
+        nx = face.x() + face.width() / 2
+        ny = face.y() + face.height() - 2
+        ang = math.radians(-45 + 90 * (0.5 + 0.3 * math.sin(phase * 2 * math.pi)))
+        p.drawLine(QPointF(nx, ny), QPointF(nx + 10 * math.cos(ang), ny + 10 * math.sin(ang)))
 
     # Probe shaft dipping down
     p.setPen(QPen(METAL, 2.5))
@@ -393,13 +422,30 @@ def draw_media_bottle(p: QPainter, x: float, y: float, w: float, h: float, unit,
     path.closeSubpath()
     p.drawPath(path)
 
-    # Liquid fill (80% full, blue-ish clean media)
-    fill_h = body_h * 0.75
+    # Liquid fill — level tracks sim reading (media remaining)
+    reading = getattr(unit, "_sim_reading", None)
+    max_vol = 500.0
+    fill_frac = max(0.02, min(0.92, (reading / max_vol) if reading is not None else 0.75))
+    fill_h = body_h * fill_frac
     fill_y = body_y + body_h - fill_h + 4
     liq = QRectF(x + w * 0.17, fill_y, w * 0.66, fill_h)
     p.setBrush(QBrush(QColor(80, 150, 200, 120)))
     p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(liq, 2, 2)
+
+    # Animated drips rising through neck when running
+    if unit.status == "running" and reading is not None and reading < max_vol:
+        drop_color = QColor(80, 150, 200, 200)
+        p.setPen(Qt.PenStyle.NoPen)
+        drop_x = x + w / 2
+        neck_top = neck_y
+        neck_bot = neck_y + neck_h
+        for i in range(3):
+            drop_t = (phase * 3 + i * 0.33) % 1.0
+            drop_y = neck_bot - drop_t * (neck_h + 14)
+            r = 3.0 * (1.0 - drop_t * 0.3)
+            p.setBrush(QBrush(drop_color))
+            p.drawEllipse(QPointF(drop_x + (i - 1) * 3, drop_y), r, r * 1.3)
 
     _text(p, x, y + h - 16, w, unit.label or "Media", 9)
 
@@ -436,13 +482,39 @@ def draw_waste_bottle(p: QPainter, x: float, y: float, w: float, h: float, unit,
     p.setPen(QPen(METAL, 1.2))
     p.drawPath(path)
 
-    # Murky waste liquid (30% full, brownish)
-    fill_h = body_h * 0.3
+    # Waste liquid — level tracks sim reading (waste collected)
+    reading = getattr(unit, "_sim_reading", None)
+    max_vol = 500.0
+    fill_frac = max(0.02, min(0.92, (reading / max_vol) if reading is not None else 0.05))
+    fill_h = body_h * fill_frac
     fill_y = body_y + body_h - fill_h + 4
     liq = QRectF(x + w * 0.17, fill_y, w * 0.66, fill_h)
     p.setBrush(QBrush(QColor(140, 110, 70, 130)))
     p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(liq, 2, 2)
+
+    # Animated drips falling into the bottle when running
+    if unit.status == "running" and reading is not None and reading > 0:
+        drop_color = QColor(160, 120, 75, 200)
+        p.setPen(Qt.PenStyle.NoPen)
+        drop_x = x + w / 2
+        neck_bottom = neck_y + neck_h
+        drop_zone = fill_y - neck_bottom
+        if drop_zone > 6:
+            for i in range(3):
+                drop_t = (phase * 3 + i * 0.33) % 1.0
+                drop_y = neck_bottom + 4 + drop_t * (drop_zone - 8)
+                r = 3.5 * (1.0 - drop_t * 0.4)
+                p.setBrush(QBrush(drop_color))
+                p.drawEllipse(QPointF(drop_x + (i - 1) * 5, drop_y), r, r * 1.4)
+            # Splash ring at liquid surface
+            splash_t = (phase * 3) % 1.0
+            if splash_t > 0.8:
+                splash_r = 6 + (splash_t - 0.8) * 40
+                splash_a = int(120 * (1.0 - (splash_t - 0.8) * 5))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(QPen(QColor(160, 120, 75, splash_a), 1.5))
+                p.drawEllipse(QPointF(drop_x, fill_y), splash_r, splash_r * 0.3)
 
     _text(p, x, y + h - 16, w, unit.label or "Waste", 9)
 
@@ -523,7 +595,7 @@ def draw_unit(painter: QPainter, unit, phase: float = 0.0):
 def draw_status_glow(painter: QPainter, unit, phase: float):
     """Glowing outline indicating connection status."""
     cat = getattr(unit, "category", "reactor")
-    if cat == "reservoir":
+    if cat in ("reservoir", "pump"):
         return
     from environnets.core.unit_types import default_dims
     tid = getattr(unit, "type_id", "pio_20ml")

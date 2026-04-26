@@ -204,6 +204,20 @@ def get_port_pos(unit, role: str, other_unit=None) -> tuple[float, float]:
         return (unit.x + w * 0.5, unit.y)
 
     if unit.category == "pump":
+        # Peristaltic pump has tube legs; other types use bounding box edges
+        tid = getattr(unit, "type_id", "peristaltic")
+        if tid == "peristaltic":
+            pcx = unit.x + w / 2
+            pcy = unit.y + h * 0.45
+            radius = min(w, h) * 0.3
+            tube_r = radius + 8
+            left_leg = (pcx - tube_r - 4, pcy + tube_r * 0.5 + 6)
+            right_leg = (pcx + tube_r + 4, pcy + tube_r * 0.5 + 6)
+            if other_unit:
+                ow = default_dims(other_unit.category, other_unit.type_id)[0]
+                ocx = other_unit.x + ow / 2
+                return left_leg if ocx < cx else right_leg
+            return right_leg
         if other_unit:
             ow, oh = default_dims(other_unit.category, other_unit.type_id)
             ocx, ocy = other_unit.x + ow / 2, other_unit.y + oh / 2
