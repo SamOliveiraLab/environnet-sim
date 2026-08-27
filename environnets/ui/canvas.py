@@ -17,7 +17,11 @@ from PyQt6.QtWidgets import (
 )
 
 from environnets.core.models import Unit, Connection
-from environnets.core.unit_types import default_dims, list_types, get_type, get_port_pos, port_tangent
+from environnets.core.unit_types import (
+    default_dims, list_types, get_type, get_port_pos, port_tangent,
+    CATEGORY_ORDER, port_count, LINE_TYPES,
+)
+from environnets.core.presets import list_presets
 from environnets.ui.cartoons import draw_unit, draw_status_glow
 from environnets.ui.theme import (
     ACCENT, ACCENT_DIM, TEXT_SECONDARY, TEXT_MUTED, TEXT_PRIMARY,
@@ -51,6 +55,9 @@ class CanvasWidget(QWidget):
         self._phase = 0.0
         self._grid = 20
         self._undo_stack: list[dict] = []
+        # (source_uid, target_uid) pairs currently carrying liquid. None means
+        # "not driven by playback"; fall back to device status.
+        self._active_links: set | None = None
 
         self._zoom = 1.0
         self._pan = QPointF(0, 0)
@@ -128,9 +135,6 @@ class CanvasWidget(QWidget):
                 p.restore()
                 return
 
-            for c in self.network.connections:
-                self._draw_tubing(p, c)
-
             if self._connecting_from:
                 u = self._connecting_from
                 w, h = default_dims(u.category, u.type_id)
@@ -142,6 +146,14 @@ class CanvasWidget(QWidget):
             for u in self.network.units:
                 draw_status_glow(p, u, self._phase)
                 draw_unit(p, u, self._phase)
+
+            # Tubing lies over the hardware, as it does on a real bench, and
+            # so a line running past a device is never hidden behind it.
+            for c in self.network.connections:
+                self._draw_tubing(p, c)
+
+            for c in self.network.connections:
+                self._draw_port_badge(p, c)
 
             self._draw_port_dots(p)
 
@@ -168,40 +180,143 @@ class CanvasWidget(QWidget):
         br = self._screen_to_canvas(QPointF(self.width(), self.height()))
         return QRectF(tl, br)
 
+    @staticmethod
+    def _rect_of(u):
+        w, h = default_dims(u.category, u.type_id)
+        return QRectF(u.x, u.y, w, h)
+
     def _draw_tubing(self, p, conn):
         src = next((u for u in self.network.units if u.uid == conn.source_uid), None)
         tgt = next((u for u in self.network.units if u.uid == conn.target_uid), None)
         if not src or not tgt:
             return
 
-        sx, sy = get_port_pos(src, "source", tgt)
-        tx, ty = get_port_pos(tgt, "target", src)
+        # No tube between an arm and the plate it dispenses into - the needle
+        # does that. Drawing one there reads as plumbing that does not exist.
+        if {src.category, tgt.category} == {"sampling", "plate"}:
+            return
 
-        sdx, sdy = port_tangent(src, sx, sy)
-        tdx, tdy = port_tangent(tgt, tx, ty)
-        dist = math.sqrt((tx - sx) ** 2 + (ty - sy) ** 2)
-        ext = min(80, dist * 0.4)
+        # Two units sitting on top of each other need no line; their spatial
+        # relationship already says it, and a curve between them lassos.
+        if self._rect_of(src).intersects(self._rect_of(tgt)):
+            return
 
-        path = QPainterPath()
-        path.moveTo(sx, sy)
-        path.cubicTo(sx + sdx * ext, sy + sdy * ext,
-                     tx + tdx * ext, ty + tdy * ext, tx, ty)
+        path = self._connection_path(conn)
+        if path is None:
+            return
+
+        # Colour the line by what it carries, so the graph reads as plumbing.
+        spec = LINE_TYPES.get(conn.kind)
+        core = QColor(spec["color"]) if spec else QColor(100, 105, 120)
+        style = (Qt.PenStyle.DashLine
+                 if spec and spec.get("dashed") else Qt.PenStyle.SolidLine)
 
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(30, 30, 38), 7))
-        p.drawPath(path)
-        p.setPen(QPen(QColor(100, 105, 120), 3))
-        p.drawPath(path)
-        p.setPen(QPen(QColor(140, 150, 170, 100), 1))
-        p.drawPath(path)
 
-        if src.status == "running" or tgt.status == "running":
-            p.setBrush(QBrush(QColor(140, 165, 210)))
+        if style == Qt.PenStyle.DashLine:
+            pen = QPen(core, 2.0)
+            pen.setStyle(style)
+            p.setPen(pen)
+            p.drawPath(path)
+        else:
+            # Soft shadow cast onto whatever the tube lies across.
+            shadow = QPen(QColor(0, 0, 0, 90), 9)
+            shadow.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(shadow)
+            p.save()
+            p.translate(1.5, 2.0)
+            p.drawPath(path)
+            p.restore()
+
+            # Dark wall, translucent bore, then a specular line along the top:
+            # reads as a soft tube rather than a drawn stroke.
+            wall = QPen(QColor(22, 24, 30), 7.5)
+            wall.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(wall)
+            p.drawPath(path)
+
+            bore = QPen(QColor(core.red(), core.green(), core.blue(), 150), 5.0)
+            bore.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(bore)
+            p.drawPath(path)
+
+            gloss = QPen(QColor(255, 255, 255, 60), 1.6)
+            gloss.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(gloss)
+            p.save()
+            p.translate(-0.6, -1.6)
+            p.drawPath(path)
+            p.restore()
+
+        # Only the path carrying liquid right now animates. When an explicit
+        # active set is supplied (playback), it is authoritative - otherwise
+        # fall back to device status.
+        if self._active_links is not None:
+            flowing = (conn.source_uid, conn.target_uid) in self._active_links
+        else:
+            flowing = src.status == "running" or tgt.status == "running"
+
+        if flowing:
+            # brighten the live line so the route reads at a glance
+            glow = QPen(QColor(core.red(), core.green(), core.blue(), 70), 8)
+            p.setPen(glow)
+            p.drawPath(path)
+            lit = QPen(core.lighter(145), 3.4)
+            p.setPen(lit)
+            p.drawPath(path)
+
+            p.setBrush(QBrush(core.lighter(160)))
             p.setPen(Qt.PenStyle.NoPen)
-            for i in range(3):
-                t = (self._phase + i / 3) % 1.0
+            for i in range(4):
+                t = (self._phase * 2 + i / 4) % 1.0
                 pt = path.pointAtPercent(t)
-                p.drawEllipse(pt, 3, 3)
+                p.drawEllipse(pt, 3.2, 3.2)
+
+    def _connection_path(self, conn):
+        """Recompute a connection's curve, or None if an end is missing."""
+        src = next((u for u in self.network.units if u.uid == conn.source_uid), None)
+        tgt = next((u for u in self.network.units if u.uid == conn.target_uid), None)
+        if not src or not tgt:
+            return None
+        sx, sy = get_port_pos(src, "source", tgt, conn.source_port, conn.kind)
+        tx, ty = get_port_pos(tgt, "target", src, conn.target_port, conn.kind)
+        sdx, sdy = port_tangent(src, sx, sy, conn.kind)
+        tdx, tdy = port_tangent(tgt, tx, ty, conn.kind)
+        dist = math.sqrt((tx - sx) ** 2 + (ty - sy) ** 2)
+        ext = min(90, max(30.0, dist * 0.42))
+        # A sample line clears the cap and dips at once, so it falls to the
+        # router without arcing over the culture drapes beside it.
+        ext_s = 36.0 if (conn.kind == "sample"
+                         and src.category == "reactor") else ext
+        path = QPainterPath()
+        path.moveTo(sx, sy)
+        path.cubicTo(sx + sdx * ext_s, sy + sdy * ext_s,
+                     tx + tdx * ext, ty + tdy * ext, tx, ty)
+        return path
+
+    def _draw_port_badge(self, p, conn):
+        """Numbered badge showing which router port a line claims."""
+        if conn.target_port is None:
+            return
+        path = self._connection_path(conn)
+        if path is None:
+            return
+
+        spec = LINE_TYPES.get(conn.kind)
+        core = QColor(spec["color"]) if spec else QColor(120, 128, 145)
+
+        # Near the inlet, where each line now has its own approach.
+        mid = path.pointAtPercent(0.80)
+        r = 13.0
+        p.setBrush(QBrush(QColor(20, 20, 25)))
+        p.setPen(QPen(core, 2.0))
+        p.drawEllipse(mid, r, r)
+        p.setPen(QPen(QColor(238, 240, 246)))
+        f = QFont("Inter", 11)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QRectF(mid.x() - r, mid.y() - r, r * 2, r * 2),
+                   Qt.AlignmentFlag.AlignCenter, str(conn.target_port))
 
     def _draw_port_dots(self, p):
         if not self.network:
@@ -211,8 +326,13 @@ class CanvasWidget(QWidget):
             src = next((u for u in self.network.units if u.uid == c.source_uid), None)
             tgt = next((u for u in self.network.units if u.uid == c.target_uid), None)
             if src and tgt:
-                connected_ports.append(get_port_pos(src, "source", tgt))
-                connected_ports.append(get_port_pos(tgt, "target", src))
+                # The arm-plate pair draws no tube, so no dots either.
+                if {src.category, tgt.category} == {"sampling", "plate"}:
+                    continue
+                connected_ports.append(
+                    get_port_pos(src, "source", tgt, c.source_port, c.kind))
+                connected_ports.append(
+                    get_port_pos(tgt, "target", src, c.target_port, c.kind))
         dot_r = 4.0 / self._zoom
         inner_r = 2.0 / self._zoom
         pen_w = 1.5 / self._zoom
@@ -223,6 +343,77 @@ class CanvasWidget(QWidget):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(QColor(200, 210, 230, 120)))
             p.drawEllipse(QPointF(px, py), inner_r, inner_r)
+
+    def _drop_preset(self, preset_id: str, canvas_pos):
+        """Place a full assembly, then select it so it can be moved as one."""
+        from environnets.core.presets import get_preset, instantiate
+
+        preset = get_preset(preset_id)
+        if not preset:
+            return
+
+        existing = {u.label for u in self.network.units if u.label}
+        units, connections = instantiate(
+            preset, canvas_pos.x(), canvas_pos.y(), existing)
+
+        self._push_undo()
+        self.network.units.extend(units)
+        self.network.connections.extend(connections)
+
+        # Leave the whole assembly selected so it can be dragged into place.
+        self._selected_unit = None
+        self._selected_units = set(units)
+
+        self._save()
+        self.update()
+
+    def _infer_kind(self, src, tgt) -> str:
+        """Pick the line type from what is being joined.
+
+        Saves classifying every line by hand; it stays changeable from the
+        right-click menu.
+        """
+        s, t = src.category, tgt.category
+        if s == "sensor" or t == "sensor":
+            return "data"
+        if t == "reservoir" and (tgt.type_id or "").startswith("waste"):
+            return "waste"
+        if s == "reservoir":
+            return "media"
+        if t in ("routing", "sampling", "plate") or s in ("routing", "sampling"):
+            return "sample"
+        if s == "reactor" and t == "reactor":
+            return "culture"
+        return "media" if t == "reactor" else "sample"
+
+    def _next_free_port(self, router):
+        """Lowest unclaimed port on a multi-port device."""
+        total = port_count(router.category, router.type_id)
+        if not total:
+            return None
+        taken = {
+            c.target_port for c in self.network.connections
+            if c.target_uid == router.uid and c.target_port is not None
+        }
+        for p in range(1, total + 1):
+            if p not in taken:
+                return p
+        return None
+
+    def _make_connection(self, src, tgt):
+        """Build a connection, typing the line and claiming a port if needed."""
+        kind = self._infer_kind(src, tgt)
+        target_port = None
+        if tgt.category == "routing":
+            target_port = self._next_free_port(tgt)
+            if target_port is None:
+                QMessageBox.warning(
+                    self, "Router full",
+                    f"All {port_count(tgt.category, tgt.type_id)} ports on "
+                    f"{tgt.label or tgt.uid} are already claimed.",
+                )
+        return Connection(source_uid=src.uid, target_uid=tgt.uid,
+                          kind=kind, target_port=target_port)
 
     def _unit_at(self, pos):
         if not self.network:
@@ -248,7 +439,7 @@ class CanvasWidget(QWidget):
             if u and self._connecting_from and u != self._connecting_from:
                 self._push_undo()
                 self.network.connections.append(
-                    Connection(source_uid=self._connecting_from.uid, target_uid=u.uid))
+                    self._make_connection(self._connecting_from, u))
                 self._connecting_from = None
                 self.setCursor(Qt.CursorShape.ArrowCursor)
                 self._save()
@@ -419,8 +610,24 @@ class CanvasWidget(QWidget):
                     other = next((x for x in self.network.units if x.uid == other_uid), None)
                     other_label = other.label if other else "?"
                     direction = "\u2192" if c.source_uid == u.uid else "\u2190"
-                    a = m.addAction(f"Disconnect {direction} {other_label}")
+                    port = f"  [port {c.target_port}]" if c.target_port else ""
+                    a = m.addAction(
+                        f"Disconnect {direction} {other_label}{port}")
                     conn_actions.append((a, c))
+
+        # Reassign a router port.
+        port_actions = []
+        if self.network:
+            routed = [
+                c for c in self.network.connections
+                if (c.source_uid == u.uid or c.target_uid == u.uid)
+                and c.target_port is not None
+            ]
+            if routed:
+                m.addSeparator()
+                for c in routed:
+                    a = m.addAction(f"Change port (currently {c.target_port})...")
+                    port_actions.append((a, c))
 
         m.addSeparator()
         a_del = m.addAction("Remove from canvas")
@@ -453,7 +660,31 @@ class CanvasWidget(QWidget):
                     self._push_undo()
                     self.network.connections.remove(c)
                     self._save()
-                    break
+                    return
+            for a, c in port_actions:
+                if choice != a:
+                    continue
+                router = next(
+                    (x for x in self.network.units if x.uid == c.target_uid), None)
+                total = port_count(router.category, router.type_id) if router else 8
+                port, ok = QInputDialog.getInt(
+                    self, "Router port",
+                    f"Port for this line (1-{total}):",
+                    value=c.target_port or 1, min=1, max=total)
+                if ok:
+                    clash = next(
+                        (x for x in self.network.connections
+                         if x is not c and x.target_uid == c.target_uid
+                         and x.target_port == port), None)
+                    if clash:
+                        QMessageBox.warning(
+                            self, "Port in use",
+                            f"Port {port} is already claimed by another line.")
+                    else:
+                        self._push_undo()
+                        c.target_port = port
+                        self._save()
+                return
 
     def _show_canvas_menu(self, pos):
         m = QMenu(self)
@@ -610,11 +841,18 @@ class CanvasWidget(QWidget):
             cat, tid = data.split(":", 1)
         except ValueError:
             return
+
+        canvas_pos = self._screen_to_canvas(e.position())
+
+        # A preset drops a whole wired assembly rather than one unit.
+        if cat == "preset":
+            self._drop_preset(tid, canvas_pos)
+            e.acceptProposedAction()
+            return
+
         defn = get_type(cat, tid)
         if not defn:
             return
-
-        canvas_pos = self._screen_to_canvas(e.position())
 
         if cat == "reactor":
             from environnets.ui.setup_wizard import SetupChoiceDialog, SetupWizard
@@ -652,6 +890,34 @@ class CanvasWidget(QWidget):
         self._selected_unit = u
         self._save()
         e.acceptProposedAction()
+
+
+class PresetItem(QPushButton):
+    """Drag this to drop an entire wired assembly."""
+
+    def __init__(self, preset):
+        super().__init__(f"  {preset.label}")
+        self.preset = preset
+        self.setFixedHeight(38)
+        self.setToolTip(f"{preset.description}\n\n{preset.summary}")
+        self.setStyleSheet(
+            f"QPushButton{{text-align:left;padding:6px 10px;"
+            f"border:1px solid {ACCENT_DIM};border-radius:6px;font-size:11px;"
+            f"font-weight:600;color:#ffffff;background:{BG_CARD}}}"
+            f"QPushButton:hover{{border-color:{ACCENT};background:{BG_HOVER}}}"
+        )
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            d = QDrag(self)
+            mime = QMimeData()
+            mime.setText(f"preset:{self.preset.preset_id}")
+            d.setMimeData(mime)
+            pm = QPixmap(self.size())
+            pm.fill(QColor(107, 138, 253, 80))
+            d.setPixmap(pm)
+            d.exec(Qt.DropAction.CopyAction)
 
 
 class PaletteItem(QPushButton):
@@ -709,13 +975,25 @@ class UnitPalette(QFrame):
         layout.setContentsMargins(10, 14, 10, 10)
         layout.setSpacing(4)
 
-        for cat_label, cat_key in [("Reactors", "reactor"), ("Reservoirs", "reservoir"), ("Pumps", "pump"), ("Sensors", "sensor")]:
-            hdr = QLabel(cat_label)
+        def header(text):
+            hdr = QLabel(text)
             hdr.setStyleSheet(
                 f"font-size:10px;font-weight:600;color:#ffffff;padding-top:8px;"
                 f"padding-bottom:2px;text-transform:uppercase;letter-spacing:0.5px"
             )
             layout.addWidget(hdr)
+
+        # Complete setups first - the fastest way onto a working canvas.
+        header("Setups")
+        for preset in list_presets():
+            layout.addWidget(PresetItem(preset))
+        sub = QLabel("Drops a full wired setup.")
+        sub.setStyleSheet(f"font-size:9px;color:{TEXT_MUTED};padding-bottom:2px")
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+
+        for cat_label, cat_key in CATEGORY_ORDER:
+            header(cat_label)
             for tid, defn in list_types(cat_key):
                 layout.addWidget(PaletteItem(cat_key, tid, defn))
 

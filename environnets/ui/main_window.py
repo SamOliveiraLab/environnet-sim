@@ -35,6 +35,7 @@ from environnets.ui.theme import (
 from environnets.ui.canvas import NetworkCanvas
 from environnets.ui.experiment_panel import ExperimentPanel
 from environnets.ui.connection_dialog import ConnectionDialog
+from environnets.ui.workflow import WorkflowBar
 
 
 class MainWindow(QMainWindow):
@@ -297,7 +298,42 @@ class MainWindow(QMainWindow):
 
     def _build_canvas_page(self):
         self.canvas = NetworkCanvas(api=self.api, store=self.store)
-        self.content_stack.addWidget(self.canvas)  # index 1
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.workflow = WorkflowBar(self.canvas)
+        self.workflow.show_report.connect(self._open_report)
+        lay.addWidget(self.workflow)
+
+        # Canvas and report share the space below the workflow bar.
+        self._canvas_stack = QStackedWidget()
+        self._canvas_stack.addWidget(self.canvas)      # 0: design
+        self._report_view = None
+        lay.addWidget(self._canvas_stack, 1)
+
+        self.content_stack.addWidget(page)  # index 1
+
+    def _open_report(self):
+        """Swap the canvas for the pre-deployment report."""
+        wf = self.workflow
+        if wf.report is None:
+            return
+        from environnets.ui.report import ReportView
+
+        if self._report_view is not None:
+            self._canvas_stack.removeWidget(self._report_view)
+            self._report_view.deleteLater()
+
+        view = ReportView(wf.report, wf.last_steps)
+        view.back_requested.connect(
+            lambda: self._canvas_stack.setCurrentIndex(0))
+        view.export_requested.connect(lambda: wf.export_package())
+        view.deploy_requested.connect(lambda: wf._run_stage("DEPLOY"))
+        self._report_view = view
+        self._canvas_stack.addWidget(view)
+        self._canvas_stack.setCurrentWidget(view)
 
     # -- network management ------------------------------------------------
 

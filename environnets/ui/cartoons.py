@@ -554,7 +554,343 @@ def draw_reagent_bottle(p: QPainter, x: float, y: float, w: float, h: float, uni
 
 # -- registry --------------------------------------------------------------
 
+# -- routing ---------------------------------------------------------------
+
+def draw_selector(p: QPainter, x, y, w, h, unit, phase):
+    """8-port rotary selector. The live port lights up; the rest sit dark."""
+    ports = get_type(unit.category, unit.type_id).get("ports", 8)
+    active = (unit.config or {}).get("active_port")
+
+    # contact shadow so the manifold sits on the bench
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor(0, 0, 0, 80)))
+    p.drawEllipse(QRectF(x + w * 0.04, y + h * 0.70, w * 0.92, h * 0.10))
+
+    body = QRectF(x, y + h * 0.22, w, h * 0.52)
+    grad = QLinearGradient(x, body.top(), x, body.bottom())
+    grad.setColorAt(0.0, QColor(52, 57, 70))
+    grad.setColorAt(1.0, QColor(30, 33, 42))
+    p.setBrush(QBrush(grad))
+    p.setPen(QPen(METAL_DARK, 1.5))
+    p.drawRoundedRect(body, 6, 6)
+
+    slot_w = w / ports
+    for i in range(1, ports + 1):
+        cx = x + slot_w * (i - 0.5)
+        lit = (active == i)
+
+        # compression fitting on top of each inlet
+        p.setBrush(QBrush(QColor(150, 158, 175)))
+        p.setPen(QPen(METAL_DARK, 1))
+        p.drawRoundedRect(
+            QRectF(cx - slot_w * 0.16, y, slot_w * 0.32, h * 0.07), 1.5, 1.5)
+
+        top = QRectF(cx - slot_w * 0.32, y + h * 0.05,
+                     slot_w * 0.64, h * 0.19)
+        p.setBrush(QBrush(METAL if not lit else ACCENT_C))
+        p.setPen(QPen(METAL_DARK, 1))
+        p.drawRoundedRect(top, 2, 2)
+
+        p.setBrush(QBrush(ACCENT_C if lit else QColor(70, 76, 92)))
+        p.setPen(QPen(METAL_DARK, 1))
+        p.drawEllipse(QPointF(cx, y + h * 0.40), 4.2, 4.2)
+
+        if lit:
+            glow = QColor(ACCENT_C)
+            glow.setAlpha(70 + int(50 * math.sin(phase * 2 * math.pi)))
+            p.setBrush(QBrush(glow))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(cx, y + h * 0.40), 8.5, 8.5)
+
+        p.setPen(QPen(QColor(150, 156, 172)))
+        f = QFont("Inter", 6)
+        p.setFont(f)
+        p.drawText(QRectF(cx - slot_w * 0.5, y + h * 0.055, slot_w, h * 0.16),
+                   Qt.AlignmentFlag.AlignCenter, str(i))
+
+        # terminal block under each port
+        p.setBrush(QBrush(QColor(64, 116, 84)))
+        p.setPen(QPen(METAL_DARK, 1))
+        p.drawRect(QRectF(cx - slot_w * 0.26, y + h * 0.60, slot_w * 0.52, h * 0.11))
+
+    # common outlet
+    p.setBrush(QBrush(METAL))
+    p.setPen(QPen(METAL_DARK, 1.2))
+    p.drawRoundedRect(QRectF(x + w - 6, y + h * 0.38, 12, h * 0.16), 3, 3)
+
+    _text(p, x, y + h * 0.80, w, unit.label or "Selector", 9)
+
+
+def draw_crossbar(p: QPainter, x, y, w, h, unit, phase):
+    """Solenoid crossbar: a grid of independently addressed valves."""
+    rows, cols = 3, 6
+    p.setBrush(QBrush(BODY))
+    p.setPen(QPen(METAL_DARK, 1.5))
+    p.drawRoundedRect(QRectF(x, y + h * 0.12, w, h * 0.62), 6, 6)
+
+    open_cells = (unit.config or {}).get("open_cells") or []
+    cw_, ch_ = w / (cols + 1), (h * 0.62) / (rows + 1)
+    for r in range(rows):
+        for c in range(cols):
+            cx = x + cw_ * (c + 1)
+            cy = y + h * 0.12 + ch_ * (r + 1)
+            lit = [r, c] in open_cells or (r, c) in open_cells
+            p.setBrush(QBrush(ACCENT_C if lit else QColor(66, 72, 88)))
+            p.setPen(QPen(METAL_DARK, 1))
+            p.drawEllipse(QPointF(cx, cy), 4.0, 4.0)
+
+    _text(p, x, y + h * 0.80, w, unit.label or "Crossbar", 9)
+
+
+def draw_solenoid(p: QPainter, x, y, w, h, unit, phase):
+    """Single two-way valve."""
+    is_open = bool((unit.config or {}).get("open"))
+    p.setBrush(QBrush(BODY))
+    p.setPen(QPen(METAL_DARK, 1.5))
+    p.drawRoundedRect(QRectF(x + w * 0.15, y + h * 0.20, w * 0.7, h * 0.45), 4, 4)
+
+    p.setBrush(QBrush(QColor(64, 116, 84)))
+    p.setPen(QPen(METAL_DARK, 1))
+    p.drawRect(QRectF(x + w * 0.32, y + h * 0.63, w * 0.36, h * 0.10))
+
+    p.setBrush(QBrush(ACCENT_C if is_open else QColor(70, 76, 92)))
+    p.setPen(QPen(METAL_DARK, 1))
+    p.drawEllipse(QPointF(x + w * 0.5, y + h * 0.40), 5.5, 5.5)
+
+    _text(p, x, y + h * 0.78, w, unit.label or "Valve", 9)
+
+
+# -- sampling --------------------------------------------------------------
+
+SHELL = QColor(232, 234, 239)        # moulded white housing
+SHELL_EDGE = QColor(146, 152, 166)
+JOINT_BAND = QColor(58, 63, 76)      # dark collar between segments
+TOOL = QColor(72, 168, 190)
+
+
+def _link(p, a: QPointF, b: QPointF, width: float):
+    """One arm segment: dark edge, white shell, specular highlight."""
+    edge = QPen(QColor(38, 42, 52), width + 2.5)
+    edge.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(edge)
+    p.drawLine(a, b)
+
+    shell = QPen(SHELL, width)
+    shell.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(shell)
+    p.drawLine(a, b)
+
+    # highlight runs along the upper edge of the segment
+    dx, dy = b.x() - a.x(), b.y() - a.y()
+    ln = math.hypot(dx, dy) or 1.0
+    nx, ny = -dy / ln, dx / ln
+    off = width * 0.24
+    hl = QPen(QColor(255, 255, 255, 150), width * 0.24)
+    hl.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(hl)
+    p.drawLine(QPointF(a.x() + nx * off, a.y() + ny * off),
+               QPointF(b.x() + nx * off, b.y() + ny * off))
+
+
+def _joint(p, c: QPointF, r: float):
+    """Joint housing: dark collar with a lighter cap and a pivot dot."""
+    p.setPen(QPen(QColor(38, 42, 52), 1.6))
+    p.setBrush(QBrush(JOINT_BAND))
+    p.drawEllipse(c, r, r)
+    p.setBrush(QBrush(SHELL))
+    p.setPen(QPen(SHELL_EDGE, 1.0))
+    p.drawEllipse(c, r * 0.62, r * 0.62)
+    p.setBrush(QBrush(QColor(120, 128, 145)))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(c, r * 0.2, r * 0.2)
+
+
+def draw_robot_arm(p: QPainter, x, y, w, h, unit, phase):
+    """Six-axis bench arm, myCobot proportions, tool pointing down."""
+    running = unit.status == "running"
+    swing = math.sin(phase * 2 * math.pi) * 0.11 if running else 0.0
+
+    bx = x + w * 0.24
+    by = y + h * 0.80
+
+    # contact shadow, so it sits on the bench rather than floating
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor(0, 0, 0, 90)))
+    p.drawEllipse(QPointF(bx, by + h * 0.15), w * 0.20, h * 0.035)
+
+    # base plate + rotating column (J1)
+    p.setBrush(QBrush(QColor(46, 50, 62)))
+    p.setPen(QPen(QColor(30, 33, 42), 1.5))
+    p.drawRoundedRect(QRectF(bx - w * 0.17, by + h * 0.06, w * 0.34, h * 0.10),
+                      3, 3)
+    p.setBrush(QBrush(SHELL))
+    p.setPen(QPen(SHELL_EDGE, 1.4))
+    p.drawRoundedRect(QRectF(bx - w * 0.11, by - h * 0.02, w * 0.22, h * 0.10),
+                      4, 4)
+    p.setBrush(QBrush(JOINT_BAND))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRect(QRectF(bx - w * 0.11, by + h * 0.045, w * 0.22, h * 0.018))
+
+    # shoulder (J2) -> elbow (J3) -> wrist (J4)
+    a1 = -1.05 + swing
+    l1 = w * 0.36
+    j2 = QPointF(bx, by - h * 0.02)
+    j3 = QPointF(j2.x() + math.cos(a1) * l1, j2.y() + math.sin(a1) * l1)
+
+    a2 = a1 + 1.22 - swing * 0.55
+    l2 = w * 0.34
+    j4 = QPointF(j3.x() + math.cos(a2) * l2, j3.y() + math.sin(a2) * l2)
+
+    _link(p, j2, j3, w * 0.085)
+    _link(p, j3, j4, w * 0.072)
+    _joint(p, j2, w * 0.062)
+    _joint(p, j3, w * 0.052)
+    _joint(p, j4, w * 0.042)
+
+    # wrist roll block (J5/J6) and the tool it carries
+    p.setBrush(QBrush(SHELL))
+    p.setPen(QPen(SHELL_EDGE, 1.2))
+    p.drawRoundedRect(QRectF(j4.x() - w * 0.035, j4.y() + h * 0.01,
+                             w * 0.07, h * 0.055), 3, 3)
+    p.setBrush(QBrush(TOOL))
+    p.setPen(QPen(QColor(38, 42, 52), 1.2))
+    p.drawRoundedRect(QRectF(j4.x() - w * 0.028, j4.y() + h * 0.06,
+                             w * 0.056, h * 0.06), 2.5, 2.5)
+
+    # needle
+    npen = QPen(QColor(206, 96, 96), 2.2)
+    npen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(npen)
+    tip = QPointF(j4.x(), j4.y() + h * 0.20)
+    p.drawLine(QPointF(j4.x(), j4.y() + h * 0.115), tip)
+
+    # cable loop from the base up the first link
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.setPen(QPen(QColor(52, 57, 70), 2.0))
+    cable = QPainterPath()
+    cable.moveTo(bx - w * 0.10, by + h * 0.03)
+    cable.cubicTo(bx - w * 0.24, by - h * 0.06,
+                  j3.x() - w * 0.20, j3.y() + h * 0.10,
+                  j3.x() - w * 0.04, j3.y() + h * 0.02)
+    p.drawPath(cable)
+
+    if running:
+        d = (phase * 2) % 1.0
+        drop = QColor(130, 190, 228, max(0, int(235 * (1 - d))))
+        p.setBrush(QBrush(drop))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QPointF(tip.x(), tip.y() + 3 + d * h * 0.10),
+                      w * 0.019, h * 0.024)
+
+    # Label under the base, where the machine actually stands.
+    _text(p, x - w * 0.20, y + h * 0.99, w, unit.label or "Arm", 9)
+
+
+def draw_needle(p: QPainter, x, y, w, h, unit, phase):
+    """Fixed sampling needle."""
+    p.setBrush(QBrush(METAL))
+    p.setPen(QPen(METAL_DARK, 1.2))
+    p.drawRoundedRect(QRectF(x + w * 0.34, y + h * 0.14, w * 0.32, h * 0.36), 3, 3)
+    pen = QPen(QColor(200, 90, 90), 2.4)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    p.drawLine(QPointF(x + w * 0.5, y + h * 0.50),
+               QPointF(x + w * 0.5, y + h * 0.80))
+    _text(p, x, y + h * 0.84, w, unit.label or "Needle", 9)
+
+
+# -- plates ----------------------------------------------------------------
+
+def draw_plate(p: QPainter, x, y, w, h, unit, phase):
+    """Well plate: skirted body, chamfered A1 corner, wells that fill."""
+    t = get_type(unit.category, unit.type_id)
+    rows, cols = t.get("rows", 3), t.get("cols", 3)
+    cfg = unit.config or {}
+    filled = set(cfg.get("filled_wells") or [])
+    sources = cfg.get("well_sources") or {}
+
+    top = y + h * 0.08
+    body_h = h * 0.76
+
+    # contact shadow
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor(0, 0, 0, 80)))
+    p.drawEllipse(QRectF(x + w * 0.06, top + body_h - h * 0.03,
+                         w * 0.88, h * 0.07))
+
+    # skirt, then deck, with the A1 corner cut like real labware
+    p.setBrush(QBrush(QColor(196, 205, 220, 40)))
+    p.setPen(QPen(QColor(150, 160, 180, 120), 1.4))
+    p.drawRoundedRect(QRectF(x, top, w, body_h), 5, 5)
+
+    chamfer = min(w, body_h) * 0.14
+    deck = QPainterPath()
+    dx0, dy0 = x + w * 0.035, top + body_h * 0.06
+    dx1, dy1 = x + w * 0.965, top + body_h * 0.94
+    deck.moveTo(dx0 + chamfer, dy0)
+    deck.lineTo(dx1, dy0)
+    deck.lineTo(dx1, dy1)
+    deck.lineTo(dx0, dy1)
+    deck.lineTo(dx0, dy0 + chamfer)
+    deck.closeSubpath()
+    p.setBrush(QBrush(QColor(228, 234, 244, 26)))
+    p.setPen(QPen(QColor(170, 180, 200, 90), 1.0))
+    p.drawPath(deck)
+
+    padx = w * 0.09
+    pady = body_h * 0.16
+    gw = (w - padx * 2) / cols
+    gh = (body_h - pady * 1.4) / rows
+    r = min(gw, gh) * 0.35
+
+    for rr in range(rows):
+        for cc in range(cols):
+            cx = x + padx + gw * (cc + 0.5)
+            cy = top + pady * 0.85 + gh * (rr + 0.5)
+            name = f"{chr(ord('A') + rr)}{cc + 1}"
+
+            # well bore
+            p.setBrush(QBrush(QColor(16, 18, 24, 200)))
+            p.setPen(QPen(QColor(126, 136, 156, 120), 1.0))
+            p.drawEllipse(QPointF(cx, cy), r, r)
+
+            if name in filled:
+                p.setBrush(QBrush(QColor(104, 172, 212, 225)))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.drawEllipse(QPointF(cx, cy), r * 0.82, r * 0.82)
+                # meniscus glint
+                p.setBrush(QBrush(QColor(220, 240, 255, 130)))
+                p.drawEllipse(QPointF(cx - r * 0.24, cy - r * 0.3),
+                              r * 0.20, r * 0.14)
+                # which reactor this well came from
+                src = sources.get(name)
+                if src and r > 7:
+                    p.setPen(QPen(QColor(12, 20, 30)))
+                    f = QFont("Inter", max(6, int(r * 0.52)))
+                    f.setBold(True)
+                    p.setFont(f)
+                    p.drawText(QRectF(cx - r, cy - r, r * 2, r * 2),
+                               Qt.AlignmentFlag.AlignCenter, src)
+
+    _text(p, x, y + h * 0.90, w, unit.label or "Plate", 9)
+
+
+def get_type(cat, tid):
+    from environnets.core.unit_types import get_type as _gt
+    return _gt(cat, tid)
+
+
 DRAW_FUNCTIONS = {
+    # routing
+    ("routing", "selector_8"):     draw_selector,
+    ("routing", "crossbar_8"):     draw_crossbar,
+    ("routing", "solenoid_valve"): draw_solenoid,
+    # sampling
+    ("sampling", "robot_arm"):     draw_robot_arm,
+    ("sampling", "sample_needle"): draw_needle,
+    # plates
+    ("plate", "plate_3x3"):        draw_plate,
+    ("plate", "plate_96"):         draw_plate,
     # reactors
     ("reactor", "pio_20ml"):     draw_pio_vial,
     ("reactor", "pio_40ml"):     draw_pio_vial,
@@ -593,22 +929,44 @@ def draw_unit(painter: QPainter, unit, phase: float = 0.0):
 
 
 def draw_status_glow(painter: QPainter, unit, phase: float):
-    """Glowing outline indicating connection status."""
+    """Small status lamp on the device.
+
+    A box drawn round every unit makes the canvas read as a diagram of boxes
+    rather than equipment sitting on a bench, so the state shows as a lamp.
+    """
     cat = getattr(unit, "category", "reactor")
     if cat in ("reservoir", "pump"):
         return
     from environnets.core.unit_types import default_dims
     tid = getattr(unit, "type_id", "pio_20ml")
     w, h = default_dims(cat, tid)
-    status_color_map = {
-        "disconnected": QColor(160, 70, 70, 120),
-        "idle":         QColor(160, 130, 55, 120),
-        "running":      QColor(80, 130, 180, 160),
-        "connected":    QColor(80, 130, 180, 160),
+
+    colours = {
+        "disconnected": QColor(168, 76, 76),
+        "idle":         QColor(176, 142, 62),
+        "running":      QColor(96, 156, 214),
+        "connected":    QColor(96, 156, 214),
     }
-    color = status_color_map.get(unit.status, QColor(160, 70, 70, 120))
-    pulse_w = 3.0 + (1.5 * math.sin(phase * 2 * math.pi) if unit.status == "running" else 0)
-    pen = QPen(color, pulse_w)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawRoundedRect(QRectF(unit.x - 4, unit.y - 4, w + 8, h + 8), 10, 10)
+    c = colours.get(unit.status, QColor(168, 76, 76))
+    # Sit the lamp on the device body, not the corner of an invisible box.
+    if cat == "reactor":
+        cx, cy = unit.x + w * 0.24, unit.y + h * 0.42
+    elif cat == "routing":
+        cx, cy = unit.x + w * 0.055, unit.y + h * 0.47
+    elif cat == "sampling":
+        cx, cy = unit.x + w * 0.24, unit.y + h * 0.90
+    elif cat == "plate":
+        cx, cy = unit.x + w * 0.94, unit.y + h * 0.16
+    else:
+        cx, cy = unit.x + 7, unit.y + 7
+
+    if unit.status == "running":
+        halo = QColor(c)
+        halo.setAlpha(60 + int(60 * abs(math.sin(phase * 2 * math.pi))))
+        painter.setBrush(QBrush(halo))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), 8.5, 8.5)
+
+    painter.setBrush(QBrush(c))
+    painter.setPen(QPen(QColor(18, 20, 26), 1.2))
+    painter.drawEllipse(QPointF(cx, cy), 3.8, 3.8)

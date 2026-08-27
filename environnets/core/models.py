@@ -51,10 +51,20 @@ class Unit:
 
 @dataclass
 class Connection:
-    """A link between two units on the canvas (e.g. pump feeds reactor)."""
+    """A link between two units on the canvas (e.g. pump feeds reactor).
+
+    `kind` types the line so the graph carries meaning rather than geometry:
+    what may legally connect to what is declared in unit_types.LINE_RULES.
+
+    `source_port` / `target_port` name a specific port on a multi-port device.
+    Only routers and plates use them; everything else leaves them at None, so
+    networks saved before ports existed still load unchanged.
+    """
     source_uid: str
     target_uid: str
-    kind: str = "flow"  # "flow", "data", "control"
+    kind: str = "flow"  # see unit_types.LINE_TYPES
+    source_port: Optional[int] = None
+    target_port: Optional[int] = None
 
 
 @dataclass
