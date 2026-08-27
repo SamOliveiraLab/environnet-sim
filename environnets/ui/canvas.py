@@ -280,18 +280,77 @@ class CanvasWidget(QWidget):
             return None
         sx, sy = get_port_pos(src, "source", tgt, conn.source_port, conn.kind)
         tx, ty = get_port_pos(tgt, "target", src, conn.target_port, conn.kind)
+
+        # Sample lines into a selector are routed like a cable tray: straight
+        # drop, a horizontal lane of their own, straight into the port.
+        lane_y = self._sample_lane_y(conn, tgt)
+        if lane_y is not None:
+            return self._tray_path(src, sx, sy, tx, ty, lane_y)
+
         sdx, sdy = port_tangent(src, sx, sy, conn.kind)
         tdx, tdy = port_tangent(tgt, tx, ty, conn.kind)
         dist = math.sqrt((tx - sx) ** 2 + (ty - sy) ** 2)
         ext = min(90, max(30.0, dist * 0.42))
-        # A sample line clears the cap and dips at once, so it falls to the
-        # router without arcing over the culture drapes beside it.
-        ext_s = 36.0 if (conn.kind == "sample"
-                         and src.category == "reactor") else ext
         path = QPainterPath()
         path.moveTo(sx, sy)
-        path.cubicTo(sx + sdx * ext_s, sy + sdy * ext_s,
+        path.cubicTo(sx + sdx * ext, sy + sdy * ext,
                      tx + tdx * ext, ty + tdy * ext, tx, ty)
+        return path
+
+    def _sample_lane_y(self, conn, tgt):
+        """The horizontal lane a router-bound sample line runs along.
+
+        Every sample line into the selector gets its own lane, stacked
+        above the inlets. Lines approaching from the left take the low
+        lanes in port order; lines from the right stack above them in
+        reverse port order - that ordering is what keeps every drop clear
+        of every other line's lane.
+        """
+        if (conn.kind != "sample" or tgt.category != "routing"
+                or not conn.target_port):
+            return None
+        left, right = [], []
+        for c in self.network.connections:
+            if (c.kind != "sample" or c.target_uid != tgt.uid
+                    or not c.target_port):
+                continue
+            s = next((u for u in self.network.units
+                      if u.uid == c.source_uid), None)
+            if s is None:
+                continue
+            sxx, _ = get_port_pos(s, "source", tgt, c.source_port, c.kind)
+            txx, _ = get_port_pos(tgt, "target", s, c.target_port, c.kind)
+            (left if sxx <= txx else right).append((c.target_port, c))
+        order = ([c for _, c in sorted(left, key=lambda t: t[0])]
+                 + [c for _, c in sorted(right, key=lambda t: -t[0])])
+        for lane, c in enumerate(order):
+            if c is conn:
+                return tgt.y - 24 - lane * 13
+        return None
+
+    @staticmethod
+    def _tray_path(src, sx, sy, tx, ty, lane_y):
+        """Orthogonal tube run with rounded corners: drop, lane, drop."""
+        r = 14.0
+        path = QPainterPath()
+        path.moveTo(sx, sy)
+        if src.category == "reactor":
+            # Out of the cap, over the vial rim, then down the front of
+            # the housing - the way the real tube hangs.
+            drop_x = sx + (26.0 if tx >= sx else -26.0)
+            path.cubicTo(sx, sy - 20, drop_x, sy - 20, drop_x, sy + 8)
+        else:
+            drop_x = sx
+        if abs(drop_x - tx) < 2 * r + 2:
+            # Already above its port: one straight fall, gently correcting.
+            path.cubicTo(drop_x, lane_y, tx, lane_y, tx, ty)
+            return path
+        sgn = 1.0 if tx > drop_x else -1.0
+        path.lineTo(drop_x, lane_y - r)
+        path.quadTo(drop_x, lane_y, drop_x + sgn * r, lane_y)
+        path.lineTo(tx - sgn * r, lane_y)
+        path.quadTo(tx, lane_y, tx, lane_y + r)
+        path.lineTo(tx, ty)
         return path
 
     def _draw_port_badge(self, p, conn):
@@ -305,8 +364,19 @@ class CanvasWidget(QWidget):
         spec = LINE_TYPES.get(conn.kind)
         core = QColor(spec["color"]) if spec else QColor(120, 128, 145)
 
-        # Near the inlet, where each line now has its own approach.
-        mid = path.pointAtPercent(0.80)
+        # On the corner where the line turns down into its port; falls back
+        # to a point near the inlet for free-form curves.
+        src = next((u for u in self.network.units
+                    if u.uid == conn.source_uid), None)
+        tgt = next((u for u in self.network.units
+                    if u.uid == conn.target_uid), None)
+        lane_y = self._sample_lane_y(conn, tgt) if tgt else None
+        if lane_y is not None and src is not None:
+            tx, _ = get_port_pos(tgt, "target", src, conn.target_port,
+                                 conn.kind)
+            mid = QPointF(tx, lane_y)
+        else:
+            mid = path.pointAtPercent(0.80)
         r = 13.0
         p.setBrush(QBrush(QColor(20, 20, 25)))
         p.setPen(QPen(core, 2.0))
