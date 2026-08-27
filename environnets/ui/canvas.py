@@ -268,7 +268,7 @@ class CanvasWidget(QWidget):
             p.setBrush(QBrush(core.lighter(160)))
             p.setPen(Qt.PenStyle.NoPen)
             for i in range(4):
-                t = (self._phase * 2 + i / 4) % 1.0
+                t = (self._phase * 1.2 + i / 4) % 1.0
                 pt = path.pointAtPercent(t)
                 p.drawEllipse(pt, 3.2, 3.2)
 

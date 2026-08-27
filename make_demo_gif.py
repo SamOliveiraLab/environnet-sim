@@ -20,7 +20,9 @@ from environnets.core.presets import get_preset, instantiate
 from environnets.core.recipe import Recipe, validate
 from environnets.core.program import compile_program
 from environnets.core.unit_types import plate_wells
-from environnets.ui.animate import render_frames, encode_gif, encode_mp4
+from environnets.ui.animate import (
+    render_frames, encode_gif, encode_mp4, step_log_line,
+)
 
 
 def main():
@@ -85,6 +87,43 @@ def main():
                             duration_min=recipe.run_hours * 60)
     print(f"Program: {len(steps)} steps")
 
+    # Export the run log and sample manifest alongside the animation, so
+    # what happened is readable (and shareable) without replaying it.
+    import json
+    log_path = os.path.join(out_dir, "run_log.txt")
+    with open(log_path, "w") as f:
+        f.write(f"EnvironNets run log - {recipe.run_id}\n")
+        f.write(f"model: {recipe.model} (iteration {recipe.iteration})\n")
+        f.write(f"objective: {recipe.objective}\n\n")
+        for s in steps:
+            clock, verb, detail = step_log_line(s)
+            f.write(f"{clock}  {verb:<14} {detail}\n")
+    print("  ", log_path)
+
+    samples = [
+        {
+            "sample_id": s.detail.get("sample_id"),
+            "source": s.detail.get("source"),
+            "port": port_map.get(s.detail.get("source")),
+            "well": s.target,
+            "volume_uL": s.detail.get("volume_uL"),
+            "at_s": s.at_s,
+        }
+        for s in steps if s.action == "dispense"
+    ]
+    results_path = os.path.join(out_dir, "results.json")
+    with open(results_path, "w") as f:
+        json.dump({
+            "run_id": recipe.run_id,
+            "model": recipe.model,
+            "iteration": recipe.iteration,
+            "objective": recipe.objective,
+            "nodes": recipe.nodes,
+            "samples_delivered": len(samples),
+            "samples": samples,
+        }, f, indent=2)
+    print("  ", results_path)
+
     # 4. Record.
     print("Rendering frames...")
     frames = render_frames(net, steps, frame_dir, run_id=recipe.run_id,
@@ -97,7 +136,7 @@ def main():
     print("  ", gif, f"({os.path.getsize(gif) / 1e6:.1f} MB)")
 
     mp4 = os.path.join(out_dir, "environnets_water_demo.mp4")
-    if encode_mp4(frame_dir, mp4, fps=24):
+    if encode_mp4(frame_dir, mp4, fps=12):
         print("  ", mp4, f"({os.path.getsize(mp4) / 1e6:.1f} MB)")
 
     return 0

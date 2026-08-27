@@ -60,6 +60,8 @@ class PlaybackState:
         self.routers = [u for u in network.units if u.category == "routing"]
         self.arms = [u for u in network.units if u.category == "sampling"]
         self.plates = [u for u in network.units if u.category == "plate"]
+        self.pumps = [u for u in network.units if u.category == "pump"]
+        self.by_uid = {u.uid: u for u in network.units}
         self.reactors = {(u.label or u.uid): u for u in network.units
                          if u.category == "reactor"}
         self.filled: dict[str, str] = {}      # well -> source label
@@ -76,8 +78,12 @@ class PlaybackState:
         u = self.reactors.get(label)
         return u.uid if u else None
 
-    def _links_for(self, source_label):
-        """The live path: source -> router, and router -> needle."""
+    def _links_for(self, source_label, pumping=False):
+        """The live path: source -> router -> sample pump -> needle.
+
+        pumping: also spin every pump along the outlet chain - liquid is
+        actually being drawn, not just a valve position being held.
+        """
         links = set()
         if not self.routers:
             return links
@@ -86,10 +92,41 @@ class PlaybackState:
         for c in self.net.connections:
             if c.target_uid == router.uid and c.source_uid == src_uid:
                 links.add((c.source_uid, c.target_uid))
-            # the flexible outlet stays connected while the arm moves
-            elif c.source_uid == router.uid and any(
-                    a.uid == c.target_uid for a in self.arms):
+        # Follow the outlet through any pumps until it reaches the needle.
+        cur = router
+        for _ in range(6):
+            step_c = next(
+                (c for c in self.net.connections
+                 if c.kind == "sample" and c.source_uid == cur.uid), None)
+            if step_c is None:
+                break
+            nxt = self.by_uid.get(step_c.target_uid)
+            if nxt is None:
+                break
+            links.add((step_c.source_uid, step_c.target_uid))
+            if nxt.category == "pump":
+                if pumping:
+                    nxt.status = "running"
+                cur = nxt
+                continue
+            break
+        return links
+
+    def _feed_links(self, reactor_label):
+        """Bottle -> feed pump -> reactor, with that pump spinning."""
+        links = set()
+        u = self.reactors.get(reactor_label)
+        if u is None:
+            return links
+        for c in self.net.connections:
+            if c.kind == "media" and c.target_uid == u.uid:
                 links.add((c.source_uid, c.target_uid))
+                pump = self.by_uid.get(c.source_uid)
+                if pump and pump.category == "pump":
+                    pump.status = "running"
+                    for c2 in self.net.connections:
+                        if c2.kind == "media" and c2.target_uid == pump.uid:
+                            links.add((c2.source_uid, c2.target_uid))
         return links
 
     # -- step application --------------------------------------------------
@@ -97,6 +134,8 @@ class PlaybackState:
     def apply(self, step):
         for a in self.arms:
             a.status = "idle"
+        for pu in self.pumps:
+            pu.status = "idle"
 
         if step.action == "init":
             for u in self.reactors.values():
@@ -109,11 +148,13 @@ class PlaybackState:
             self._set_links(set())
 
         elif step.action == "feed":
-            # A fed reactor is READY, not delivering; its sample line stays dark.
+            # A fed reactor is READY, not delivering; its sample line stays
+            # dark - but its feed pump turns and the feed line runs.
             self.fed.add(step.target)
             u = self.reactors.get(step.target)
             if u:
                 u.status = "idle"
+            self._set_links(self._feed_links(step.target))
 
         elif step.action == "select":
             self.source = step.target
@@ -121,12 +162,14 @@ class PlaybackState:
             self._set_port(self.port)
             for name, u in self.reactors.items():
                 u.status = "running" if name == self.source else "idle"
-            self._set_links(self._links_for(self.source))
+            # Valve set, sample pump drawing.
+            self._set_links(self._links_for(self.source, pumping=True))
 
         elif step.action == "move":
             self.well = step.target
             for a in self.arms:
                 a.status = "running"
+            # Needle in motion - the pump waits.
             self._set_links(self._links_for(self.source))
 
         elif step.action == "dispense":
@@ -138,13 +181,15 @@ class PlaybackState:
             self.delivered += 1
             self.sample_id = step.detail.get("sample_id")
             self._push_plate()
-            self._set_links(self._links_for(self.source))
+            # Pushing the draw out through the needle.
+            self._set_links(self._links_for(self.source, pumping=True))
 
         elif step.action == "purge":
             self._set_port(None)
             for u in self.reactors.values():
                 u.status = "idle"
-            self._set_links(set())
+            self._set_links(self._links_for(None, pumping=True)
+                            if self.routers else set())
 
     # -- helpers -----------------------------------------------------------
 
@@ -175,6 +220,85 @@ VERBS = {
     "dispense": "DISPENSE",
     "purge": "FLUSH / PURGE",
 }
+
+# How long each operation dwells on screen, relative to the base hold.
+# Selecting, moving and dispensing are the real physical work; they get
+# real time. Bookkeeping steps pass quickly.
+ACTION_HOLD = {
+    "init": 1.0,
+    "home": 0.7,
+    "feed": 1.6,
+    "select": 2.0,
+    "move": 1.8,
+    "dispense": 2.6,
+    "purge": 1.2,
+}
+
+LOG_W = 330          # width of the run-log panel on the right
+
+
+def step_log_line(step) -> tuple[str, str, str]:
+    """(clock, verb, detail) for one program step - the same wording in
+    the on-screen log panel and the exported run_log.txt."""
+    t = int(step.at_s)
+    clock = f"{t // 3600:02d}:{t % 3600 // 60:02d}:{t % 60:02d}"
+    a = step.action
+    if a == "select":
+        d = f"{step.target} -> port {step.detail.get('port')}"
+    elif a == "move":
+        d = f"needle -> well {step.target}"
+    elif a == "dispense":
+        d = (f"{step.detail.get('volume_uL', 0):.0f} uL "
+             f"{step.detail.get('source', '')} -> {step.target}")
+    elif a == "feed":
+        d = f"{step.target}  D={step.detail.get('d_per_h', 0):.2f}/h"
+    elif a == "home":
+        d = "selector -> home"
+    elif a == "purge":
+        d = "flush sample line"
+    else:
+        d = step.target or ""
+    return clock, VERBS.get(a, a.upper()), d
+
+
+LOG_COLORS = {
+    "SELECT SOURCE": QColor(107, 138, 253),
+    "MOVE TO WELL": QColor(196, 200, 212),
+    "DISPENSE": QColor(122, 196, 148),
+    "READY": QColor(184, 149, 64),
+    "FLUSH / PURGE": QColor(150, 130, 190),
+}
+
+
+def _draw_log(painter, x, width, height, lines):
+    """The run log down the right edge: what the rig is doing, as it does it."""
+    painter.fillRect(QRectF(x, HUD_H, width, height - HUD_H),
+                     QColor(13, 13, 16))
+    painter.setPen(QPen(QColor(44, 46, 56)))
+    painter.drawLine(int(x), HUD_H, int(x), height)
+
+    painter.setFont(QFont("Inter", 9, QFont.Weight.DemiBold))
+    painter.setPen(QPen(QColor(124, 124, 138)))
+    painter.drawText(QRectF(x + 16, HUD_H + 10, width - 32, 16),
+                     Qt.AlignmentFlag.AlignVCenter, "RUN LOG")
+
+    line_h = 17
+    top = HUD_H + 36
+    n_fit = int((height - top - 10) / line_h)
+    shown = lines[-n_fit:]
+    mono = QFont("Menlo", 9)
+    for i, (clock, verb, detail) in enumerate(shown):
+        y = top + i * line_h
+        painter.setFont(mono)
+        painter.setPen(QPen(QColor(108, 110, 124)))
+        painter.drawText(QRectF(x + 16, y, 58, line_h),
+                         Qt.AlignmentFlag.AlignVCenter, clock)
+        painter.setPen(QPen(LOG_COLORS.get(verb, QColor(150, 154, 166))))
+        painter.drawText(QRectF(x + 78, y, 96, line_h),
+                         Qt.AlignmentFlag.AlignVCenter, verb)
+        painter.setPen(QPen(QColor(210, 214, 224)))
+        painter.drawText(QRectF(x + 176, y, width - 190, line_h),
+                         Qt.AlignmentFlag.AlignVCenter, detail)
 
 
 def _draw_hud(painter, width, step, index, total, run_id, state, n_samples,
@@ -304,17 +428,19 @@ def render_frames(network, steps, out_dir, *, run_id="ENV", width=1280,
         def link_hardware(self, unit):
             pass
 
+    canvas_w = width - LOG_W
     holder = _Holder(network)
     cw = CanvasWidget(holder)
-    cw.setFixedSize(width, height)
+    cw.setFixedSize(canvas_w, height)
     cw._timer.stop()          # drive the animation phase by hand
     cw.show()
     QApplication.processEvents()
-    _fit(cw, network, width, height)
+    _fit(cw, network, canvas_w, height)
 
     state = PlaybackState(network)
     n_samples = sum(1 for s in steps if s.action == "dispense")
     paths = []
+    log_lines: list[tuple[str, str, str]] = []
     n = 0
 
     def grab(step, index, total, done=False):
@@ -326,8 +452,9 @@ def render_frames(network, steps, out_dir, *, run_id="ENV", width=1280,
         cw.render(p)                       # paint the canvas straight in
         _draw_hud(p, width, step, index, total, run_id, state, n_samples,
                   done=done)
+        _draw_log(p, canvas_w, LOG_W, height, log_lines)
         if done:
-            _draw_complete(p, width, height, state, n_samples)
+            _draw_complete(p, canvas_w, height, state, n_samples)
         p.end()
         path = os.path.join(out_dir, f"frame_{n:05d}.png")
         img.save(path)
@@ -337,12 +464,16 @@ def render_frames(network, steps, out_dir, *, run_id="ENV", width=1280,
     total = len(steps)
     for i, step in enumerate(steps):
         state.apply(step)
-        for k in range(hold):
-            cw._phase = ((i * hold + k) % 30) / 30.0
+        log_lines.append(step_log_line(step))
+        dwell = max(2, round(hold * ACTION_HOLD.get(step.action, 1.0)))
+        for k in range(dwell):
+            cw._phase = (n % 36) / 36.0
             grab(step, i, total)
 
+    log_lines.append(("", "COMPLETE", f"{state.delivered}/{n_samples} "
+                      "samples delivered"))
     for _ in range(tail):
-        cw._phase = (n % 30) / 30.0
+        cw._phase = (n % 36) / 36.0
         grab(steps[-1] if steps else None, total - 1, total, done=True)
 
     return paths
