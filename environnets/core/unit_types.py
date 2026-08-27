@@ -205,8 +205,8 @@ SAMPLING_TYPES = {
     "robot_arm": {
         "label": "Robotic arm",
         "description": "myCobot-class arm carrying the sampling needle.",
-        "width": 150,
-        "height": 150,
+        "width": 230,
+        "height": 200,
         "config_fields": ["serial_port", "home_pose", "draw_uL"],
     },
     "sample_needle": {

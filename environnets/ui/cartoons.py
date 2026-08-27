@@ -732,14 +732,29 @@ def draw_robot_arm(p: QPainter, x, y, w, h, unit, phase):
     p.drawRect(QRectF(bx - w * 0.11, by + h * 0.045, w * 0.22, h * 0.018))
 
     # shoulder (J2) -> elbow (J3) -> wrist (J4)
-    a1 = -1.05 + swing
     l1 = w * 0.36
-    j2 = QPointF(bx, by - h * 0.02)
-    j3 = QPointF(j2.x() + math.cos(a1) * l1, j2.y() + math.sin(a1) * l1)
-
-    a2 = a1 + 1.22 - swing * 0.55
     l2 = w * 0.34
-    j4 = QPointF(j3.x() + math.cos(a2) * l2, j3.y() + math.sin(a2) * l2)
+    j2 = QPointF(bx, by - h * 0.02)
+
+    target = getattr(unit, "_reach_xy", None)
+    if target is not None:
+        # Two-link IK, elbow up: put the wrist one needle-length above the
+        # goal so the needle tip lands exactly on it.
+        gx, gy = target[0], target[1] - h * 0.20
+        ddx, ddy = gx - j2.x(), gy - j2.y()
+        d = max(abs(l1 - l2) + 2.0,
+                min(l1 + l2 - 1.0, math.hypot(ddx, ddy)))
+        base_a = math.atan2(ddy, ddx)
+        cos_a = (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d)
+        a1 = base_a - math.acos(max(-1.0, min(1.0, cos_a)))
+        j3 = QPointF(j2.x() + math.cos(a1) * l1, j2.y() + math.sin(a1) * l1)
+        a2 = math.atan2(gy - j3.y(), gx - j3.x())
+        j4 = QPointF(j3.x() + math.cos(a2) * l2, j3.y() + math.sin(a2) * l2)
+    else:
+        a1 = -1.05 + swing
+        j3 = QPointF(j2.x() + math.cos(a1) * l1, j2.y() + math.sin(a1) * l1)
+        a2 = a1 + 1.22 - swing * 0.55
+        j4 = QPointF(j3.x() + math.cos(a2) * l2, j3.y() + math.sin(a2) * l2)
 
     _link(p, j2, j3, w * 0.085)
     _link(p, j3, j4, w * 0.072)
@@ -800,6 +815,25 @@ def draw_needle(p: QPainter, x, y, w, h, unit, phase):
 
 
 # -- plates ----------------------------------------------------------------
+
+def plate_well_center(unit, well: str) -> tuple[float, float]:
+    """Canvas position of one well's centre - the same grid draw_plate
+    lays out, so the needle and the drawing always agree."""
+    from environnets.core.unit_types import default_dims
+    w, h = default_dims(unit.category, unit.type_id)
+    t = get_type(unit.category, unit.type_id)
+    rows, cols = t.get("rows", 3), t.get("cols", 3)
+    rr = ord(well[0]) - ord("A")
+    cc = int(well[1:]) - 1
+    top = unit.y + h * 0.08
+    body_h = h * 0.76
+    padx = w * 0.09
+    pady = body_h * 0.16
+    gw = (w - padx * 2) / cols
+    gh = (body_h - pady * 1.4) / rows
+    return (unit.x + padx + gw * (cc + 0.5),
+            top + pady * 0.85 + gh * (rr + 0.5))
+
 
 def draw_plate(p: QPainter, x, y, w, h, unit, phase):
     """Well plate: skirted body, chamfered A1 corner, wells that fill."""

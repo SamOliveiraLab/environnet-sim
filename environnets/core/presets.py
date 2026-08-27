@@ -175,7 +175,7 @@ BENCH = Preset(
         PresetUnit("router", "routing", "selector_8", "Router", 460, 720),
         PresetUnit("ps", "pump", "peristaltic", "P7 sample", 760, 720),
         PresetUnit("plate", "plate", "plate_3x3", "Plate", 980, 760),
-        PresetUnit("arm", "sampling", "robot_arm", "Arm", 920, 660),
+        PresetUnit("arm", "sampling", "robot_arm", "Arm", 875, 610),
     ],
     links=[
         # feeds: bottle -> pump -> reactor

@@ -17,6 +17,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QImage
 
 from environnets.core.unit_types import default_dims
+from environnets.ui.cartoons import plate_well_center
 
 
 HUD_H = 54
@@ -91,6 +92,33 @@ class PlaybackState:
         # Cascade order, for staggering growth down the train.
         self.chain = sorted(self.reactors.values(), key=lambda u: u.x)
 
+        # Needle travel: where the arm is coming from and going to.
+        self._arm_from: tuple | None = None
+        self._arm_to: tuple | None = None
+
+    def _arm_rest_tip(self):
+        """Needle tip of the arm's parked pose (mirrors the cartoon)."""
+        if not self.arms:
+            return None
+        a = self.arms[0]
+        w, h = default_dims(a.category, a.type_id)
+        j2 = (a.x + w * 0.24, a.y + h * 0.80 - h * 0.02)
+        a1, l1, l2 = -1.05, w * 0.36, w * 0.34
+        j3 = (j2[0] + math.cos(a1) * l1, j2[1] + math.sin(a1) * l1)
+        a2 = a1 + 1.22
+        j4 = (j3[0] + math.cos(a2) * l2, j3[1] + math.sin(a2) * l2)
+        return (j4[0], j4[1] + h * 0.20)
+
+    def tween(self, step, frac):
+        """Advance the needle along its travel for this step's frames."""
+        if step.action == "move" and self._arm_from and self._arm_to:
+            f = frac * frac * (3 - 2 * frac)          # ease in-out
+            x = self._arm_from[0] + (self._arm_to[0] - self._arm_from[0]) * f
+            y = self._arm_from[1] + (self._arm_to[1] - self._arm_from[1]) * f
+            y -= math.sin(math.pi * f) * 10           # hop over the wells
+            for a in self.arms:
+                a._reach_xy = (x, y)
+
     # -- wiring lookups ----------------------------------------------------
 
     def _uid(self, label):
@@ -160,6 +188,8 @@ class PlaybackState:
         if step.action == "init":
             for u in self.reactors.values():
                 u.status = "idle"
+            for a in self.arms:
+                a._reach_xy = None
             self.source = self.port = self.well = None
             self._set_links(set())
 
@@ -186,7 +216,11 @@ class PlaybackState:
             self.well = step.target
             for a in self.arms:
                 a.status = "running"
-            # Needle in motion - the pump waits.
+            # Needle in motion - travel from wherever it is to the well.
+            if self.plates:
+                self._arm_from = (getattr(self.arms[0], "_reach_xy", None)
+                                  or self._arm_rest_tip()) if self.arms else None
+                self._arm_to = plate_well_center(self.plates[0], step.target)
             self._set_links(self._links_for(self.source))
 
         elif step.action == "dispense":
@@ -194,6 +228,9 @@ class PlaybackState:
             self.source = step.detail.get("source", self.source)
             for a in self.arms:
                 a.status = "running"
+                if self.plates:
+                    a._reach_xy = plate_well_center(self.plates[0],
+                                                    step.target)
             self.filled[step.target] = self.source or ""
             self.delivered += 1
             self.sample_id = step.detail.get("sample_id")
@@ -501,6 +538,7 @@ def render_frames(network, steps, out_dir, *, run_id="ENV", width=1280,
         log_lines.append(step_log_line(step))
         dwell = max(2, round(hold * ACTION_HOLD.get(step.action, 1.0)))
         for k in range(dwell):
+            state.tween(step, k / max(1, dwell - 1))
             cw._phase = (n % 36) / 36.0
             grab(step, i, total)
 
