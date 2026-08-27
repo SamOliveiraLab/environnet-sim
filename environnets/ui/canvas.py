@@ -58,6 +58,9 @@ class CanvasWidget(QWidget):
         # (source_uid, target_uid) pairs currently carrying liquid. None means
         # "not driven by playback"; fall back to device status.
         self._active_links: set | None = None
+        # Lines the continuous process keeps busy (feeds, culture train):
+        # they carry slow flow dots but stay dimmer than the active path.
+        self._process_links: set | None = None
 
         self._zoom = 1.0
         self._pan = QPointF(0, 0)
@@ -271,6 +274,18 @@ class CanvasWidget(QWidget):
                 t = (self._phase * 1.2 + i / 4) % 1.0
                 pt = path.pointAtPercent(t)
                 p.drawEllipse(pt, 3.2, 3.2)
+
+        elif (self._process_links is not None
+              and (conn.source_uid, conn.target_uid) in self._process_links):
+            # The continuous process: quiet metabolite traffic, slower and
+            # dimmer than the sampling path so the active route still leads.
+            p.setBrush(QBrush(QColor(core.red(), core.green(),
+                                     core.blue(), 165)))
+            p.setPen(Qt.PenStyle.NoPen)
+            for i in range(3):
+                t = (self._phase * 0.5 + i / 3) % 1.0
+                pt = path.pointAtPercent(t)
+                p.drawEllipse(pt, 2.3, 2.3)
 
     def _connection_path(self, conn):
         """Recompute a connection's curve, or None if an end is missing."""

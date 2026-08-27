@@ -56,7 +56,12 @@ def main():
     for c in net.connections:
         if c.target_uid == router.uid and c.target_port is not None:
             port_map[by_uid[c.source_uid].label] = c.target_port
-    nodes = sorted(port_map, key=lambda n: port_map[n])
+    # Sample the three reactors; three rounds fill the 3x3 plate exactly -
+    # one row per timepoint, one column per reactor. The harvest pot stays
+    # plumbed on port 4 but is not scheduled.
+    reactor_labels = {u.label for u in net.units if u.category == "reactor"}
+    nodes = sorted((n for n in port_map if n in reactor_labels),
+                   key=lambda n: port_map[n])
 
     recipe = Recipe(
         run_id="ENV-DEMO-001",
@@ -127,7 +132,7 @@ def main():
     # 4. Record.
     print("Rendering frames...")
     frames = render_frames(net, steps, frame_dir, run_id=recipe.run_id,
-                           width=1500, height=1000, hold=5, tail=16)
+                           width=1500, height=1000, hold=6, tail=20)
     print(f"  {len(frames)} frames")
 
     gif = os.path.join(out_dir, "environnets_water_demo.gif")

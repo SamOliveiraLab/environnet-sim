@@ -8,6 +8,7 @@ so what gets recorded is exactly what the app draws.
 Encoding needs ffmpeg (preferred, two-pass palette) or ImageMagick.
 """
 
+import math
 import os
 import shutil
 import subprocess
@@ -71,6 +72,24 @@ class PlaybackState:
         self.sample_id: str | None = None
         self.delivered = 0
         self.fed: set[str] = set()
+        self.started = False                  # continuous process live?
+        self.t = 0.0                          # sim clock, seconds
+
+        # The production train: every feed, culture and harvest line, and
+        # the pumps that drive them. Once the run starts these never stop -
+        # it is a chemostat cascade, not a batch of one-shot moves.
+        self.process_links: set = set()
+        self.process_pumps: list = []
+        for c in network.connections:
+            if c.kind in ("media", "culture", "waste"):
+                self.process_links.add((c.source_uid, c.target_uid))
+                for uid in (c.source_uid, c.target_uid):
+                    u = self.by_uid.get(uid)
+                    if u and u.category == "pump" and u not in self.process_pumps:
+                        self.process_pumps.append(u)
+
+        # Cascade order, for staggering growth down the train.
+        self.chain = sorted(self.reactors.values(), key=lambda u: u.x)
 
     # -- wiring lookups ----------------------------------------------------
 
@@ -132,6 +151,7 @@ class PlaybackState:
     # -- step application --------------------------------------------------
 
     def apply(self, step):
+        self.t = max(self.t, float(step.at_s))
         for a in self.arms:
             a.status = "idle"
         for pu in self.pumps:
@@ -148,21 +168,18 @@ class PlaybackState:
             self._set_links(set())
 
         elif step.action == "feed":
-            # A fed reactor is READY, not delivering; its sample line stays
-            # dark - but its feed pump turns and the feed line runs.
+            # A fed reactor joins the continuous process: from here on its
+            # culture grows and its lines carry traffic without stopping.
             self.fed.add(step.target)
-            u = self.reactors.get(step.target)
-            if u:
-                u.status = "idle"
+            self.started = True
             self._set_links(self._feed_links(step.target))
 
         elif step.action == "select":
             self.source = step.target
             self.port = step.detail.get("port")
             self._set_port(self.port)
-            for name, u in self.reactors.items():
-                u.status = "running" if name == self.source else "idle"
-            # Valve set, sample pump drawing.
+            # Valve set, sample pump drawing. The reactors keep running -
+            # the lit path is what says who is being sampled.
             self._set_links(self._links_for(self.source, pumping=True))
 
         elif step.action == "move":
@@ -186,10 +203,26 @@ class PlaybackState:
 
         elif step.action == "purge":
             self._set_port(None)
-            for u in self.reactors.values():
-                u.status = "idle"
             self._set_links(self._links_for(None, pumping=True)
                             if self.routers else set())
+
+        self._advance_process()
+
+    def _advance_process(self):
+        """Continuous culture: pumps turning, biomass climbing the train.
+
+        The OD curve is a dummy - saturating growth staggered down the
+        cascade so B1 leads and B3 lags, the way the real train would.
+        """
+        if not self.started:
+            return
+        for pu in self.process_pumps:
+            pu.status = "running"
+        for i, u in enumerate(self.chain):
+            u.status = "running"
+            stagger = max(0.4, 1.0 - 0.18 * i)
+            u.last_od = round(
+                (0.10 + 1.15 * (1 - math.exp(-self.t / 480.0))) * stagger, 3)
 
     # -- helpers -----------------------------------------------------------
 
@@ -227,11 +260,11 @@ VERBS = {
 ACTION_HOLD = {
     "init": 1.0,
     "home": 0.7,
-    "feed": 1.6,
-    "select": 2.0,
-    "move": 1.8,
-    "dispense": 2.6,
-    "purge": 1.2,
+    "feed": 1.8,
+    "select": 2.4,
+    "move": 2.2,
+    "dispense": 3.2,
+    "purge": 1.4,
 }
 
 LOG_W = 330          # width of the run-log panel on the right
@@ -446,6 +479,7 @@ def render_frames(network, steps, out_dir, *, run_id="ENV", width=1280,
     def grab(step, index, total, done=False):
         nonlocal n
         cw._active_links = state.links
+        cw._process_links = state.process_links if state.started else None
         img = QImage(width, height, QImage.Format.Format_RGB32)
         img.fill(QColor(18, 18, 22))
         p = QPainter(img)

@@ -174,7 +174,7 @@ BENCH = Preset(
         # to right under their own sources, so no two sample lines cross.
         PresetUnit("router", "routing", "selector_8", "Router", 460, 720),
         PresetUnit("ps", "pump", "peristaltic", "P7 sample", 760, 720),
-        PresetUnit("plate", "plate", "plate_96", "Plate", 980, 760),
+        PresetUnit("plate", "plate", "plate_3x3", "Plate", 980, 760),
         PresetUnit("arm", "sampling", "robot_arm", "Arm", 920, 660),
     ],
     links=[
