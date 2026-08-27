@@ -287,6 +287,26 @@ class CanvasWidget(QWidget):
         if lane_y is not None:
             return self._tray_path(src, sx, sy, tx, ty, lane_y)
 
+        # Ends stacked vertically: fall straight, no wave.
+        if abs(tx - sx) < 6 and abs(ty - sy) > 30:
+            path = QPainterPath()
+            path.moveTo(sx, sy)
+            path.cubicTo(sx, sy + (ty - sy) * 0.35,
+                         tx, ty - (ty - sy) * 0.35, tx, ty)
+            return path
+
+        # Ends at the same height (the culture run between caps and their
+        # transfer pumps): one uniform shallow sag, the same on every span,
+        # instead of a wave shaped by whatever the tangents happen to be.
+        if conn.kind in ("culture", "waste") and abs(ty - sy) < 24 \
+                and abs(tx - sx) > 40:
+            droop = max(sy, ty) + 15
+            path = QPainterPath()
+            path.moveTo(sx, sy)
+            path.cubicTo(sx + (tx - sx) * 0.32, droop,
+                         sx + (tx - sx) * 0.68, droop, tx, ty)
+            return path
+
         sdx, sdy = port_tangent(src, sx, sy, conn.kind)
         tdx, tdy = port_tangent(tgt, tx, ty, conn.kind)
         dist = math.sqrt((tx - sx) ** 2 + (ty - sy) ** 2)

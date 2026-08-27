@@ -145,36 +145,37 @@ BENCH = Preset(
         "selector, out one line to the needle, and into the plate."
     ),
     units=[
-        # Feed row, each bottle above the reactor it supplies.
-        PresetUnit("xyl", "reservoir", "media_bottle", "Xylose", 20, 0),
-        PresetUnit("glu", "reservoir", "media_bottle", "Glucose", 320, 0),
-        PresetUnit("pcoum", "reservoir", "media_bottle", "p-coumarate", 620, 0),
-
-        # Feed pumps: nothing moves without one.
-        PresetUnit("p1", "pump", "peristaltic", "P1 feed", 10, 180),
-        PresetUnit("p2", "pump", "peristaltic", "P2 feed", 310, 180),
-        PresetUnit("p3", "pump", "peristaltic", "P3 feed", 610, 180),
+        # Feed row: each pump with its bottle beside it, the pair sitting
+        # up and to the right of the reactor it feeds. The tube leaves the
+        # bottle's cap (dip tube), loops over to the pump, and the pump
+        # line swings down into the reactor cap.
+        PresetUnit("p1", "pump", "peristaltic", "P1 feed", 135, 90),
+        PresetUnit("xyl", "reservoir", "media_bottle", "Xylose", 335, 70),
+        PresetUnit("p2", "pump", "peristaltic", "P2 feed", 515, 90),
+        PresetUnit("glu", "reservoir", "media_bottle", "Glucose", 715, 70),
+        PresetUnit("p3", "pump", "peristaltic", "P3 feed", 895, 90),
+        PresetUnit("pcoum", "reservoir", "media_bottle", "p-coumarate", 1095, 70),
 
         # Reactor row: production flows along it, B1 -> B2 -> B3 -> OUT.
         PresetUnit("b1", "reactor", "pio_20ml", "B1", 0, 340),
-        PresetUnit("b2", "reactor", "pio_20ml", "B2", 300, 340),
-        PresetUnit("b3", "reactor", "pio_20ml", "B3", 600, 340),
+        PresetUnit("b2", "reactor", "pio_20ml", "B2", 380, 340),
+        PresetUnit("b3", "reactor", "pio_20ml", "B3", 760, 340),
         # The harvest pot sits a step lower - gravity drain - which also
         # keeps its sample line out of the router's unused ports.
-        PresetUnit("out", "reservoir", "waste_bottle", "OUT", 900, 420),
+        PresetUnit("out", "reservoir", "waste_bottle", "OUT", 1140, 440),
 
         # Transfer pumps ride high in the gaps, level with the caps they
         # connect, leaving the space below clear for the sample lines.
-        PresetUnit("pt1", "pump", "peristaltic", "P4 transfer", 160, 300),
-        PresetUnit("pt2", "pump", "peristaltic", "P5 transfer", 460, 300),
-        PresetUnit("pt3", "pump", "peristaltic", "P6 harvest", 760, 305),
+        PresetUnit("pt1", "pump", "peristaltic", "P4 transfer", 224, 300),
+        PresetUnit("pt2", "pump", "peristaltic", "P5 transfer", 604, 300),
+        PresetUnit("pt3", "pump", "peristaltic", "P6 harvest", 980, 300),
 
         # Sampling row, centred under the span it serves. Ports 1-4 sit left
         # to right under their own sources, so no two sample lines cross.
-        PresetUnit("router", "routing", "selector_8", "Router", 390, 700),
-        PresetUnit("ps", "pump", "peristaltic", "P7 sample", 650, 700),
-        PresetUnit("plate", "plate", "plate_96", "Plate", 880, 740),
-        PresetUnit("arm", "sampling", "robot_arm", "Arm", 810, 650),
+        PresetUnit("router", "routing", "selector_8", "Router", 460, 720),
+        PresetUnit("ps", "pump", "peristaltic", "P7 sample", 760, 720),
+        PresetUnit("plate", "plate", "plate_96", "Plate", 980, 760),
+        PresetUnit("arm", "sampling", "robot_arm", "Arm", 920, 660),
     ],
     links=[
         # feeds: bottle -> pump -> reactor

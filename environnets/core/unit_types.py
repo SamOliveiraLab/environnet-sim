@@ -11,8 +11,8 @@ REACTOR_TYPES = {
     "pio_20ml": {
         "label": "Pioreactor 20ml",
         "description": "Pioreactor with 20ml glass vial, standard heterogeneity setup.",
-        "width": 140,
-        "height": 170,
+        "width": 160,
+        "height": 195,
         "config_fields": ["hostname"],
     },
     "pio_40ml": {
@@ -358,9 +358,10 @@ def get_port_pos(unit, role: str, other_unit=None, port: int | None = None,
         return (cx, unit.y + h * 0.10)
 
     if unit.category == "reservoir":
-        # Leave from whichever end faces the other unit, so feed lines run
-        # straight down instead of looping back over the bottle.
-        if other_unit is not None:
+        # Media always draws through a dip tube in the cap - a bottle never
+        # drains from its base. Other lines may still tap the bottom (the
+        # harvest pot's sample line does) when the far end sits below.
+        if kind != "media" and other_unit is not None:
             oh = default_dims(other_unit.category, other_unit.type_id)[1]
             if other_unit.y + oh / 2 > cy:
                 return (unit.x + w * 0.5, unit.y + h)
