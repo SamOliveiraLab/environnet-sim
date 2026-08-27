@@ -358,14 +358,15 @@ def get_port_pos(unit, role: str, other_unit=None, port: int | None = None,
         return (cx, unit.y + h * 0.10)
 
     if unit.category == "reservoir":
-        # Media always draws through a dip tube in the cap - a bottle never
-        # drains from its base. Other lines may still tap the bottom (the
-        # harvest pot's sample line does) when the far end sits below.
-        if kind != "media" and other_unit is not None:
-            oh = default_dims(other_unit.category, other_unit.type_id)[1]
-            if other_unit.y + oh / 2 > cy:
-                return (unit.x + w * 0.5, unit.y + h)
-        return (unit.x + w * 0.5, unit.y + h * 0.07)
+        # Every line goes through the multi-port cap - media draw, waste
+        # return and sample alike. A bottle never taps its base. Each kind
+        # gets its own spot on the cap so the anchors stay apart.
+        cap_y = unit.y + h * 0.07
+        if kind == "sample":
+            return (unit.x + w * 0.38, cap_y)
+        if kind == "waste" and role == "target":
+            return (unit.x + w * 0.62, cap_y)
+        return (unit.x + w * 0.5, cap_y)
 
     if unit.category == "sampling" and unit.type_id == "robot_arm":
         # The tube plugs into the base plate the machine stands on, not the

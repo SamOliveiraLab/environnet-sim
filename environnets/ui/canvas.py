@@ -374,6 +374,13 @@ class CanvasWidget(QWidget):
             # the housing - the way the real tube hangs.
             drop_x = sx + (26.0 if tx >= sx else -26.0)
             path.cubicTo(sx, sy - 20, drop_x, sy - 20, drop_x, sy + 8)
+        elif src.category == "reservoir":
+            # Out of the cap, over the shoulder, down the side of the
+            # bottle - never through it.
+            bw = default_dims(src.category, src.type_id)[0]
+            sgn = 1.0 if tx >= sx else -1.0
+            drop_x = sx + sgn * (bw * 0.5 + 10.0)
+            path.cubicTo(sx, sy - 26, drop_x, sy - 26, drop_x, sy + 16)
         else:
             drop_x = sx
         if abs(drop_x - tx) < 2 * r + 2:
